@@ -117,10 +117,10 @@ robj *createEmbeddedStringObject(const char *ptr, size_t len) {
  * we allocate as EMBSTR will still fit into the 64 byte arena of jemalloc. */
 #define OBJ_ENCODING_EMBSTR_SIZE_LIMIT 44
 robj *createStringObject(const char *ptr, size_t len) {
-    if (len <= OBJ_ENCODING_EMBSTR_SIZE_LIMIT)
-        return createEmbeddedStringObject(ptr,len);
+    if (len <= OBJ_ENCODING_EMBSTR_SIZE_LIMIT) // 如果长度 <= 44
+        return createEmbeddedStringObject(ptr,len); // 短字串编码
     else
-        return createRawStringObject(ptr,len);
+        return createRawStringObject(ptr,len); // 普通字串编码
 }
 
 /* Create a string object from a long long value. When possible returns a
@@ -447,13 +447,13 @@ robj *tryObjectEncoding(robj *o) {
     /* It's not safe to encode shared objects: shared objects can be shared
      * everywhere in the "object space" of Redis and may end in places where
      * they are not handled. We handle them only as values in the keyspace. */
-     if (o->refcount > 1) return o;
+     if (o->refcount > 1) return o; // 如果有引用则不能进行编码优化
 
     /* Check if we can represent this string as a long integer.
      * Note that we are sure that a string larger than 20 chars is not
      * representable as a 32 nor 64 bit integer. */
     len = sdslen(s);
-    if (len <= 20 && string2l(s,len,&value)) {
+    if (len <= 20 && string2l(s,len,&value)) { // 长度小于20则进行数字转化 long long
         /* This object is encodable as a long. Try to use a shared object.
          * Note that we avoid using shared integers when maxmemory is used
          * because every object needs to have a private LRU field for the LRU
@@ -461,16 +461,16 @@ robj *tryObjectEncoding(robj *o) {
         if ((server.maxmemory == 0 ||
             !(server.maxmemory_policy & MAXMEMORY_FLAG_NO_SHARED_INTEGERS)) &&
             value >= 0 &&
-            value < OBJ_SHARED_INTEGERS)
+            value < OBJ_SHARED_INTEGERS) //共享的整型数 0-9999
         {
             decrRefCount(o);
             incrRefCount(shared.integers[value]);
-            return shared.integers[value];
+            return shared.integers[value]; // 返回共享数
         } else {
             if (o->encoding == OBJ_ENCODING_RAW) {
                 sdsfree(o->ptr);
-                o->encoding = OBJ_ENCODING_INT;
-                o->ptr = (void*) value;
+                o->encoding = OBJ_ENCODING_INT; // 转化整形
+                o->ptr = (void*) value; // 赋值
                 return o;
             } else if (o->encoding == OBJ_ENCODING_EMBSTR) {
                 decrRefCount(o);

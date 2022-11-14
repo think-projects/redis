@@ -31,11 +31,11 @@
 #ifndef __INTSET_H
 #define __INTSET_H
 #include <stdint.h>
-
+// 整数集合
 typedef struct intset {
-    uint32_t encoding;
-    uint32_t length;
-    int8_t contents[];
+    uint32_t encoding; // 编码 值
+    uint32_t length; // 元素个数
+    int8_t contents[]; // 柔型数组
 } intset;
 
 intset *intsetNew(void);

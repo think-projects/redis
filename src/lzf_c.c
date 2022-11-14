@@ -94,7 +94,14 @@
  * 111ooooo LLLLLLLL oooooooo ; backref L+8 octets, o+1=1..4096 offset
  *
  */
-
+/**
+ * 数据压缩
+ * @param in_data 输入数据
+ * @param in_len 输入数据长度
+ * @param out_data 输出压缩数据
+ * @param out_len 输出压缩数据长度
+ * @return
+ */
 unsigned int
 lzf_compress (const void *const in_data, unsigned int in_len,
 	      void *out_data, unsigned int out_len
@@ -106,11 +113,11 @@ lzf_compress (const void *const in_data, unsigned int in_len,
 #if !LZF_STATE_ARG
   LZF_STATE htab;
 #endif
-  const u8 *ip = (const u8 *)in_data;
-        u8 *op = (u8 *)out_data;
-  const u8 *in_end  = ip + in_len;
-        u8 *out_end = op + out_len;
-  const u8 *ref;
+  const u8 *ip = (const u8 *)in_data; // 输入数据当前处理位置指针
+        u8 *op = (u8 *)out_data; // 当前输出位置
+  const u8 *in_end  = ip + in_len; // 输入数据结束位置
+        u8 *out_end = op + out_len; // 输出数据结束位置
+  const u8 *ref; // 数据之前出现的位置
 
   /* off requires a type wide enough to hold a general pointer difference.
    * ISO C doesn't have that (size_t might not be enough and ptrdiff_t only
@@ -129,21 +136,21 @@ lzf_compress (const void *const in_data, unsigned int in_len,
 
   if (!in_len || !out_len)
     return 0;
-
+// htab hash表 用户hash计算
 #if INIT_HTAB
   memset (htab, 0, sizeof (htab));
 #endif
 
   lit = 0; op++; /* start run */
 
-  hval = FRST (ip);
-  while (ip < in_end - 2)
+  hval = FRST (ip); // 该元素及后面2个元素的hash值
+  while (ip < in_end - 2) // 判断有处理数据
     {
       LZF_HSLOT *hslot;
 
       hval = NEXT (hval, ip);
       hslot = htab + IDX (hval);
-      ref = *hslot + LZF_HSLOT_BIAS; *hslot = ip - LZF_HSLOT_BIAS;
+      ref = *hslot + LZF_HSLOT_BIAS; *hslot = ip - LZF_HSLOT_BIAS; // 计算位置
 
       if (1
 #if INIT_HTAB
@@ -157,7 +164,7 @@ lzf_compress (const void *const in_data, unsigned int in_len,
 #else
           && *(u16 *)ref == *(u16 *)ip
 #endif
-        )
+        ) // 有重复
         {
           /* match found at *ref++ */
           unsigned int len = 2;
@@ -195,7 +202,7 @@ lzf_compress (const void *const in_data, unsigned int in_len,
                   len++; if (ref [len] != ip [len]) break;
                   len++; if (ref [len] != ip [len]) break;
                 }
-
+              // 计算重复的长度 len
               do
                 len++;
               while (len < maxlen && ref[len] == ip[len]);
@@ -204,13 +211,13 @@ lzf_compress (const void *const in_data, unsigned int in_len,
             }
 
           len -= 2; /* len is now #octets - 1 */
-          ip++;
+          ip++; // 重复位置
 
-          if (len < 7)
+          if (len < 7) // 重复长度<7
             {
-              *op++ = (off >> 8) + (len << 5);
+              *op++ = (off >> 8) + (len << 5); // 输出位置 off(偏移量)
             }
-          else
+          else // 重复长度>7
             {
               *op++ = (off >> 8) + (  7 << 5);
               *op++ = len - 7;
@@ -220,7 +227,7 @@ lzf_compress (const void *const in_data, unsigned int in_len,
 
           lit = 0; op++; /* start run */
 
-          ip += len + 1;
+          ip += len + 1; // 重复结束
 
           if (expect_false (ip >= in_end - 2))
             break;
@@ -253,25 +260,25 @@ lzf_compress (const void *const in_data, unsigned int in_len,
           while (len--);
 #endif
         }
-      else
+      else // 无重复
         {
           /* one more literal byte we must copy */
           if (expect_false (op >= out_end))
             return 0;
 
-          lit++; *op++ = *ip++;
+          lit++; *op++ = *ip++; // 标记
 
           if (expect_false (lit == MAX_LIT))
             {
               op [- lit - 1] = lit - 1; /* stop run */
-              lit = 0; op++; /* start run */
+              lit = 0; op++; /* start run */ // 重新标记
             }
         }
     }
 
   if (op + 3 > out_end) /* at most 3 bytes can be missing here */
     return 0;
-
+  /* 更新 hash表 */
   while (ip < in_end)
     {
       lit++; *op++ = *ip++;
@@ -283,9 +290,9 @@ lzf_compress (const void *const in_data, unsigned int in_len,
         }
     }
 
-  op [- lit - 1] = lit - 1; /* end run */
+  op [- lit - 1] = lit - 1; /* end run */ // 剩余写入输出数组
   op -= !lit; /* undo run if length is zero */
 
-  return op - (u8 *)out_data;
+  return op - (u8 *)out_data; // 返回压缩长度
 }
 

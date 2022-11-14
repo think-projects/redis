@@ -183,7 +183,7 @@ void clientInstallWriteHandler(client *c) {
          * a system call. We'll only really install the write handler if
          * we'll not be able to write the whole reply at once. */
         c->flags |= CLIENT_PENDING_WRITE;
-        listAddNodeHead(server.clients_pending_write,c);
+        listAddNodeHead(server.clients_pending_write,c); // 写入用户待处理列表 beforeSleep函数会遍历此列表
     }
 }
 
@@ -296,11 +296,11 @@ void _addReplyStringToList(client *c, const char *s, size_t len) {
 
 /* Add the object 'obj' string representation to the client output buffer. */
 void addReply(client *c, robj *obj) {
-    if (prepareClientToWrite(c) != C_OK) return;
+    if (prepareClientToWrite(c) != C_OK) return; // 判断是否需要返回
 
     if (sdsEncodedObject(obj)) {
-        if (_addReplyToBuffer(c,obj->ptr,sdslen(obj->ptr)) != C_OK)
-            _addReplyStringToList(c,obj->ptr,sdslen(obj->ptr));
+        if (_addReplyToBuffer(c,obj->ptr,sdslen(obj->ptr)) != C_OK) // 写写入缓冲区(buffer),如果写入失败
+            _addReplyStringToList(c,obj->ptr,sdslen(obj->ptr)); // 则写入应答列表
     } else if (obj->encoding == OBJ_ENCODING_INT) {
         /* For integer encoded strings we just convert it into a string
          * using our optimized function, and attach the resulting string
@@ -1095,7 +1095,7 @@ int handleClientsWithPendingWrites(void) {
         if (c->flags & CLIENT_PROTECTED) continue;
 
         /* Try to write buffers to the client socket. */
-        if (writeToClient(c->fd,c,0) == C_ERR) continue;
+        if (writeToClient(c->fd,c,0) == C_ERR) continue; // 向客户端写入数据
 
         /* If after the synchronous writes above we still have data to
          * output to the client, we need to install the writable handler. */
@@ -1112,7 +1112,7 @@ int handleClientsWithPendingWrites(void) {
                 ae_flags |= AE_BARRIER;
             }
             if (aeCreateFileEvent(server.el, c->fd, ae_flags,
-                sendReplyToClient, c) == AE_ERR)
+                sendReplyToClient, c) == AE_ERR) // 创建sendReplyToClient事件
             {
                     freeClientAsync(c);
             }
@@ -1318,7 +1318,7 @@ int processMultibulkBuffer(client *c) {
         c->qb_pos = (newline-c->querybuf)+2;
 
         if (ll <= 0) return C_OK;
-
+        // 参数个数(客户端) 缓存(处理粘包)
         c->multibulklen = ll;
 
         /* Setup argv array on client structure */
@@ -1327,7 +1327,7 @@ int processMultibulkBuffer(client *c) {
     }
 
     serverAssertWithInfo(c,NULL,c->multibulklen > 0);
-    while(c->multibulklen) {
+    while(c->multibulklen) { // 根据参数个数循环 拆解参数
         /* Read bulk length if unknown */
         if (c->bulklen == -1) {
             newline = strchr(c->querybuf+c->qb_pos,'\r');
@@ -1458,9 +1458,9 @@ void processInputBuffer(client *c) {
             }
         }
 
-        if (c->reqtype == PROTO_REQ_INLINE) {
+        if (c->reqtype == PROTO_REQ_INLINE) { // 如果是内联模式请求(telnet)
             if (processInlineBuffer(c) != C_OK) break;
-        } else if (c->reqtype == PROTO_REQ_MULTIBULK) {
+        } else if (c->reqtype == PROTO_REQ_MULTIBULK) { // 如果是普通请求模式(RESP)
             if (processMultibulkBuffer(c) != C_OK) break;
         } else {
             serverPanic("Unknown request type");

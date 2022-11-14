@@ -43,7 +43,7 @@ typedef struct listIter {
     listNode *next;
     int direction;
 } listIter;
-
+// 链表
 typedef struct list {
     listNode *head;
     listNode *tail;

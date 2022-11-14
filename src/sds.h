@@ -45,14 +45,14 @@ typedef char *sds;
 /* Note: sdshdr5 is never used, we just access the flags byte directly.
  * However is here to document the layout of type 5 SDS strings. */
 struct __attribute__ ((__packed__)) sdshdr5 {
-    unsigned char flags; /* 3 lsb of type, and 5 msb of string length */
-    char buf[];
+    unsigned char flags; /* 3 lsb of type, and 5 msb of string length */ // 标识 3低位typ 5高位 len
+    char buf[]; // 柔性数组 存放数据
 };
 struct __attribute__ ((__packed__)) sdshdr8 {
-    uint8_t len; /* used */
-    uint8_t alloc; /* excluding the header and null terminator */
-    unsigned char flags; /* 3 lsb of type, 5 unused bits */
-    char buf[];
+    uint8_t len; /* used */ // 已使用长度
+    uint8_t alloc; /* excluding the header and null terminator */ // 申请长度 总长度
+    unsigned char flags; /* 3 lsb of type, 5 unused bits */ // 标识 3低位typ 5高位 len
+    char buf[]; // 柔性数组 存放数据
 };
 struct __attribute__ ((__packed__)) sdshdr16 {
     uint16_t len; /* used */
@@ -72,7 +72,7 @@ struct __attribute__ ((__packed__)) sdshdr64 {
     unsigned char flags; /* 3 lsb of type, 5 unused bits */
     char buf[];
 };
-
+// 宏定义
 #define SDS_TYPE_5  0
 #define SDS_TYPE_8  1
 #define SDS_TYPE_16 2

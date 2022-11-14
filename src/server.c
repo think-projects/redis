@@ -777,10 +777,10 @@ int incrementallyRehash(int dbid) {
  * for dict.c to resize the hash tables accordingly to the fact we have o not
  * running childs. */
 void updateDictResizePolicy(void) {
-    if (server.rdb_child_pid == -1 && server.aof_child_pid == -1)
-        dictEnableResize();
+    if (server.rdb_child_pid == -1 && server.aof_child_pid == -1) // 没有AOF RDB子进程重写
+        dictEnableResize(); // 允许改变字典大小
     else
-        dictDisableResize();
+        dictDisableResize(); // 不允许改变字典大小
 }
 
 int hasActiveChildProcess() {
@@ -1232,8 +1232,8 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
 
     /* Start a scheduled AOF rewrite if this was requested by the user while
      * a BGSAVE was in progress. */
-    if (server.rdb_child_pid == -1 && server.aof_child_pid == -1 &&
-        server.aof_rewrite_scheduled)
+    if (server.rdb_child_pid == -1 && server.aof_child_pid == -1 && // 没有子进程在进行RDB和AOF重写
+        server.aof_rewrite_scheduled) // 设置aof_rewrite_scheduled
     {
         rewriteAppendOnlyFileBackground();
     }
@@ -1245,7 +1245,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
         int statloc;
         pid_t pid;
 
-        if ((pid = wait3(&statloc,WNOHANG,NULL)) != 0) {
+        if ((pid = wait3(&statloc,WNOHANG,NULL)) != 0) { // 等待处理结果
             int exitcode = WEXITSTATUS(statloc);
             int bysignal = 0;
 
@@ -1257,11 +1257,11 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
                     strerror(errno),
                     (int) server.rdb_child_pid,
                     (int) server.aof_child_pid);
-            } else if (pid == server.rdb_child_pid) {
+            } else if (pid == server.rdb_child_pid) { // 如果是RDB
                 backgroundSaveDoneHandler(exitcode,bysignal);
                 if (!bysignal && exitcode == 0) receiveChildInfo();
-            } else if (pid == server.aof_child_pid) {
-                backgroundRewriteDoneHandler(exitcode,bysignal);
+            } else if (pid == server.aof_child_pid) { // 如果是AOF重写
+                backgroundRewriteDoneHandler(exitcode,bysignal); // 子进程处理结束,父进程收尾工作
                 if (!bysignal && exitcode == 0) receiveChildInfo();
             } else {
                 if (!ldbRemoveChild(pid)) {
@@ -1277,7 +1277,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
         /* If there is not a background saving/rewrite in progress check if
          * we have to save/rewrite now. */
         for (j = 0; j < server.saveparamslen; j++) {
-            struct saveparam *sp = server.saveparams+j;
+            struct saveparam *sp = server.saveparams+j; // 配置参数 sec change
 
             /* Save if we reached the given amount of changes,
              * the given amount of seconds, and if the latest bgsave was
@@ -1293,24 +1293,24 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
                     sp->changes, (int)sp->seconds);
                 rdbSaveInfo rsi, *rsiptr;
                 rsiptr = rdbPopulateSaveInfo(&rsi);
-                rdbSaveBackground(server.rdb_filename,rsiptr);
+                rdbSaveBackground(server.rdb_filename,rsiptr); // 执行RDB
                 break;
             }
         }
 
         /* Trigger an AOF rewrite if needed. */
-        if (server.aof_state == AOF_ON &&
-            server.rdb_child_pid == -1 &&
-            server.aof_child_pid == -1 &&
+        if (server.aof_state == AOF_ON && //AOF开启
+            server.rdb_child_pid == -1 && // 没有在进行的RDB
+            server.aof_child_pid == -1 && // 没有在进行的AOF
             server.aof_rewrite_perc &&
             server.aof_current_size > server.aof_rewrite_min_size)
         {
             long long base = server.aof_rewrite_base_size ?
                 server.aof_rewrite_base_size : 1;
             long long growth = (server.aof_current_size*100/base) - 100;
-            if (growth >= server.aof_rewrite_perc) {
+            if (growth >= server.aof_rewrite_perc) { // 满足阈值条件 百分比和文件大小
                 serverLog(LL_NOTICE,"Starting automatic rewriting of AOF on %lld%% growth",growth);
-                rewriteAppendOnlyFileBackground();
+                rewriteAppendOnlyFileBackground(); // 进行AOF重写
             }
         }
     }
@@ -1318,7 +1318,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
 
     /* AOF postponed flush: Try at every cron cycle if the slow fsync
      * completed. */
-    if (server.aof_flush_postponed_start) flushAppendOnlyFile(0);
+    if (server.aof_flush_postponed_start) flushAppendOnlyFile(0); // 有条件刷盘
 
     /* AOF write errors: in this case we have a buffer to flush as well and
      * clear the AOF error in case of success to make the DB writable again,
@@ -1326,7 +1326,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
      * an higher frequency. */
     run_with_period(1000) {
         if (server.aof_last_write_status == C_ERR)
-            flushAppendOnlyFile(0);
+            flushAppendOnlyFile(0); // 有条件刷盘
     }
 
     /* Close clients that need to be closed asynchronous */
@@ -1420,10 +1420,10 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
         processUnblockedClients();
 
     /* Write the AOF buffer on disk */
-    flushAppendOnlyFile(0);
+    flushAppendOnlyFile(0); // 有条件刷盘
 
     /* Handle writes with pending output buffers. */
-    handleClientsWithPendingWrites();
+    handleClientsWithPendingWrites(); // 处理向客户端写入数据
 
     /* Before we are going to sleep, let the threads access the dataset by
      * releasing the GIL. Redis main thread will not touch anything at this
@@ -1933,7 +1933,7 @@ void checkTcpBacklogSettings(void) {
  * impossible to bind, or no bind addresses were specified in the server
  * configuration but the function is not able to bind * for at least
  * one of the IPv4 or IPv6 protocols. */
-int listenToPort(int port, int *fds, int *count) {
+int listenToPort(int port, int *fds, int *count) { // 创建socket,启动监听,支持ipv4和ipv6
     int j;
 
     /* Force binding of 0.0.0.0 if no bind address is specified, always
@@ -2032,14 +2032,14 @@ void resetServerStats(void) {
     server.stat_net_output_bytes = 0;
     server.aof_delayed_fsync = 0;
 }
-
+// 启动服务器
 void initServer(void) {
     int j;
-
+    // 设置信号
     signal(SIGHUP, SIG_IGN);
     signal(SIGPIPE, SIG_IGN);
     setupSignalHandlers();
-
+    // 打开syslog
     if (server.syslog_enabled) {
         openlog(server.syslog_ident, LOG_PID | LOG_NDELAY | LOG_NOWAIT,
             server.syslog_facility);
@@ -2049,7 +2049,7 @@ void initServer(void) {
     server.pid = getpid();
     server.current_client = NULL;
     server.fixed_time_expire = 0;
-    server.clients = listCreate();
+    server.clients = listCreate(); // 客户端链表
     server.clients_index = raxNew();
     server.clients_to_close = listCreate();
     server.slaves = listCreate();
@@ -2062,17 +2062,17 @@ void initServer(void) {
     server.get_ack_from_slaves = 0;
     server.clients_paused = 0;
     server.system_memory_size = zmalloc_get_memory_size();
-
+    // 创建全局共享对象
     createSharedObjects();
     adjustOpenFilesLimit();
-    server.el = aeCreateEventLoop(server.maxclients+CONFIG_FDSET_INCR);
+    server.el = aeCreateEventLoop(server.maxclients+CONFIG_FDSET_INCR); // 创建事件处理
     if (server.el == NULL) {
         serverLog(LL_WARNING,
             "Failed creating the event loop. Error message: '%s'",
             strerror(errno));
         exit(1);
     }
-    server.db = zmalloc(sizeof(redisDb)*server.dbnum);
+    server.db = zmalloc(sizeof(redisDb)*server.dbnum); // 创建db(16个)
 
     /* Open the TCP listening socket for the user commands. */
     if (server.port != 0 &&
@@ -2080,7 +2080,7 @@ void initServer(void) {
         exit(1);
 
     /* Open the listening Unix domain socket. */
-    if (server.unixsocket != NULL) {
+    if (server.unixsocket != NULL) { // 打开监听端口
         unlink(server.unixsocket); /* don't care if this fails */
         server.sofd = anetUnixServer(server.neterr,server.unixsocket,
             server.unixsocketperm, server.tcp_backlog);
@@ -2098,7 +2098,7 @@ void initServer(void) {
     }
 
     /* Create the Redis databases, and initialize other internal state. */
-    for (j = 0; j < server.dbnum; j++) {
+    for (j = 0; j < server.dbnum; j++) { // 创建redis数据库
         server.db[j].dict = dictCreate(&dbDictType,NULL);
         server.db[j].expires = dictCreate(&keyptrDictType,NULL);
         server.db[j].blocking_keys = dictCreate(&keylistDictType,NULL);
@@ -2109,7 +2109,7 @@ void initServer(void) {
         server.db[j].defrag_later = listCreate();
     }
     evictionPoolAlloc(); /* Initialize the LRU keys pool. */
-    server.pubsub_channels = dictCreate(&keylistDictType,NULL);
+    server.pubsub_channels = dictCreate(&keylistDictType,NULL); // pub sub
     server.pubsub_patterns = listCreate();
     listSetFreeMethod(server.pubsub_patterns,freePubsubPattern);
     listSetMatchMethod(server.pubsub_patterns,listMatchPubsubPattern);
@@ -2147,16 +2147,16 @@ void initServer(void) {
     /* Create the timer callback, this is our way to process many background
      * operations incrementally, like clients timeout, eviction of unaccessed
      * expired keys and so forth. */
-    if (aeCreateTimeEvent(server.el, 1, serverCron, NULL, NULL) == AE_ERR) {
+    if (aeCreateTimeEvent(server.el, 1, serverCron, NULL, NULL) == AE_ERR) { // 时间事件
         serverPanic("Can't create event loop timers.");
         exit(1);
     }
 
     /* Create an event handler for accepting new connections in TCP and Unix
      * domain sockets. */
-    for (j = 0; j < server.ipfd_count; j++) {
+    for (j = 0; j < server.ipfd_count; j++) { // 文件事件
         if (aeCreateFileEvent(server.el, server.ipfd[j], AE_READABLE,
-            acceptTcpHandler,NULL) == AE_ERR)
+            acceptTcpHandler,NULL) == AE_ERR) // acceptTcpHandler
             {
                 serverPanic(
                     "Unrecoverable error creating server.ipfd file event.");
@@ -2176,7 +2176,7 @@ void initServer(void) {
     }
 
     /* Open the AOF file if needed. */
-    if (server.aof_state == AOF_ON) {
+    if (server.aof_state == AOF_ON) { // 有AOF则打开AOF文件
         server.aof_fd = open(server.aof_filename,
                                O_WRONLY|O_APPEND|O_CREAT,0644);
         if (server.aof_fd == -1) {
@@ -2243,7 +2243,7 @@ void populateCommandTable(void) {
             }
             f++;
         }
-
+        // 向字典添加数据
         retval1 = dictAdd(server.commands, sdsnew(c->name), c);
         /* Populate an additional dictionary that will be unaffected
          * by rename-command statements in redis.conf. */
@@ -2349,11 +2349,12 @@ struct redisCommand *lookupCommandOrOriginal(sds name) {
  * command execution, for example when serving a blocked client, you
  * want to use propagate().
  */
+// 命令传播
 void propagate(struct redisCommand *cmd, int dbid, robj **argv, int argc,
                int flags)
 {
-    if (server.aof_state != AOF_OFF && flags & PROPAGATE_AOF)
-        feedAppendOnlyFile(cmd,dbid,argv,argc);
+    if (server.aof_state != AOF_OFF && flags & PROPAGATE_AOF) // 是否开启AOF
+        feedAppendOnlyFile(cmd,dbid,argv,argc); // AOF写缓冲 aof_buffer
     if (flags & PROPAGATE_REPL)
         replicationFeedSlaves(server.slaves,dbid,argv,argc);
 }
@@ -2475,7 +2476,7 @@ void call(client *c, int flags) {
     dirty = server.dirty;
     updateCachedTime(0);
     start = server.ustime;
-    c->cmd->proc(c);
+    c->cmd->proc(c); // 执行函数
     duration = ustime()-start;
     dirty = server.dirty-dirty;
     if (dirty < 0) dirty = 0;
@@ -2539,6 +2540,7 @@ void call(client *c, int flags) {
         /* Call propagate() only if at least one of AOF / replication
          * propagation is needed. Note that modules commands handle replication
          * in an explicit way, so we never replicate them automatically. */
+        /* 命令传播 AOF replication */
         if (propagate_flags != PROPAGATE_NONE && !(c->cmd->flags & CMD_MODULE))
             propagate(c->cmd,c->db->id,c->argv,c->argc,propagate_flags);
     }
@@ -2582,6 +2584,7 @@ void call(client *c, int flags) {
  * If C_OK is returned the client is still alive and valid and
  * other operations can be performed by the caller. Otherwise
  * if C_ERR is returned the client was destroyed (i.e. after QUIT). */
+// 命令执行
 int processCommand(client *c) {
     moduleCallCommandFilters(c);
 
@@ -2589,7 +2592,7 @@ int processCommand(client *c) {
      * go through checking for replication and QUIT will cause trouble
      * when FORCE_REPLICATION is enabled and would be implemented in
      * a regular command proc. */
-    if (!strcasecmp(c->argv[0]->ptr,"quit")) {
+    if (!strcasecmp(c->argv[0]->ptr,"quit")) { // quit校验
         addReply(c,shared.ok);
         c->flags |= CLIENT_CLOSE_AFTER_REPLY;
         return C_ERR;
@@ -2597,7 +2600,7 @@ int processCommand(client *c) {
 
     /* Now lookup the command and check ASAP about trivial error conditions
      * such as wrong arity, bad command name and so forth. */
-    c->cmd = c->lastcmd = lookupCommand(c->argv[0]->ptr);
+    c->cmd = c->lastcmd = lookupCommand(c->argv[0]->ptr); // 查找命令是否存在
     if (!c->cmd) {
         flagTransaction(c);
         sds args = sdsempty();
@@ -2609,7 +2612,7 @@ int processCommand(client *c) {
         sdsfree(args);
         return C_OK;
     } else if ((c->cmd->arity > 0 && c->cmd->arity != c->argc) ||
-               (c->argc < -c->cmd->arity)) {
+               (c->argc < -c->cmd->arity)) { // 验证参数数目
         flagTransaction(c);
         addReplyErrorFormat(c,"wrong number of arguments for '%s' command",
             c->cmd->name);
@@ -2617,7 +2620,7 @@ int processCommand(client *c) {
     }
 
     /* Check if the user is authenticated */
-    if (server.requirepass && !c->authenticated && c->cmd->proc != authCommand)
+    if (server.requirepass && !c->authenticated && c->cmd->proc != authCommand) // 是否有权限
     {
         flagTransaction(c);
         addReply(c,shared.noautherr);
@@ -2633,7 +2636,7 @@ int processCommand(client *c) {
         !(c->flags & CLIENT_LUA &&
           server.lua_caller->flags & CLIENT_MASTER) &&
         !(c->cmd->getkeys_proc == NULL && c->cmd->firstkey == 0 &&
-          c->cmd->proc != execCommand))
+          c->cmd->proc != execCommand)) // 集群校验
     {
         int hashslot;
         int error_code;
@@ -2656,7 +2659,7 @@ int processCommand(client *c) {
      * the event loop since there is a busy Lua script running in timeout
      * condition, to avoid mixing the propagation of scripts with the
      * propagation of DELs due to eviction. */
-    if (server.maxmemory && !server.lua_timedout) {
+    if (server.maxmemory && !server.lua_timedout) { // 最大内存校验
         int out_of_memory = freeMemoryIfNeededAndSafe() == C_ERR;
         /* freeMemoryIfNeeded may flush slave output buffers. This may result
          * into a slave, that may be the active client, to be freed. */
@@ -2772,11 +2775,11 @@ int processCommand(client *c) {
     /* Exec the command */
     if (c->flags & CLIENT_MULTI &&
         c->cmd->proc != execCommand && c->cmd->proc != discardCommand &&
-        c->cmd->proc != multiCommand && c->cmd->proc != watchCommand)
+        c->cmd->proc != multiCommand && c->cmd->proc != watchCommand) // 事务校验
     {
         queueMultiCommand(c);
         addReply(c,shared.queued);
-    } else {
+    } else { // 真正执行
         call(c,CMD_CALL_FULL);
         c->woff = server.master_repl_offset;
         if (listLength(server.ready_keys))
@@ -2836,7 +2839,7 @@ int prepareForShutdown(int flags) {
         }
         /* Append only file: flush buffers and fsync() the AOF at exit */
         serverLog(LL_NOTICE,"Calling fsync() on the AOF file.");
-        flushAppendOnlyFile(1);
+        flushAppendOnlyFile(1); // 强制AOF刷盘 存文件
         redis_fsync(server.aof_fd);
     }
 
@@ -4064,12 +4067,12 @@ int checkForSentinelMode(int argc, char **argv) {
 }
 
 /* Function called at startup to load RDB or AOF file in memory. */
-void loadDataFromDisk(void) {
+void loadDataFromDisk(void) { // 启动时从磁盘读取数据
     long long start = ustime();
-    if (server.aof_state == AOF_ON) {
-        if (loadAppendOnlyFile(server.aof_filename) == C_OK)
+    if (server.aof_state == AOF_ON) { // 有AOF则加载AOF
+        if (loadAppendOnlyFile(server.aof_filename) == C_OK) // 加载AOF
             serverLog(LL_NOTICE,"DB loaded from append only file: %.3f seconds",(float)(ustime()-start)/1000000);
-    } else {
+    } else { // 否则加载RDB
         rdbSaveInfo rsi = RDB_SAVE_INFO_INIT;
         if (rdbLoad(server.rdb_filename,&rsi) == C_OK) {
             serverLog(LL_NOTICE,"DB loaded from disk: %.3f seconds",
@@ -4218,7 +4221,7 @@ int redisIsSupervised(int mode) {
     return 0;
 }
 
-
+/* Server启动 入口 */
 int main(int argc, char **argv) {
     struct timeval tv;
     int j;
@@ -4263,7 +4266,7 @@ int main(int argc, char **argv) {
     getRandomHexChars(hashseed,sizeof(hashseed));
     dictSetHashFunctionSeed((uint8_t*)hashseed);
     server.sentinel_mode = checkForSentinelMode(argc,argv);
-    initServerConfig();
+    initServerConfig(); // 初始化配置文件
     moduleInitModulesSystem();
 
     /* Store the executable path and arguments in a safe place in order
@@ -4276,7 +4279,7 @@ int main(int argc, char **argv) {
     /* We need to init sentinel right now as parsing the configuration file
      * in sentinel mode will have the effect of populating the sentinel
      * data structures with master nodes to monitor. */
-    if (server.sentinel_mode) {
+    if (server.sentinel_mode) { // 初始化哨兵
         initSentinelConfig();
         initSentinel();
     }
@@ -4372,7 +4375,7 @@ int main(int argc, char **argv) {
 
     server.supervised = redisIsSupervised(server.supervised_mode);
     int background = server.daemonize && !server.supervised;
-    if (background) daemonize();
+    if (background) daemonize(); // 启动后台
 
     initServer();
     if (background || server.pidfile) createPidFile();
@@ -4404,7 +4407,7 @@ int main(int argc, char **argv) {
     #endif /* __linux__ */
         moduleLoadFromQueue();
         InitServerLast();
-        loadDataFromDisk();
+        loadDataFromDisk(); // 加载数据到内存
         if (server.cluster_enabled) {
             if (verifyClusterConfigWithData() == C_ERR) {
                 serverLog(LL_WARNING,
@@ -4429,7 +4432,7 @@ int main(int argc, char **argv) {
 
     aeSetBeforeSleepProc(server.el,beforeSleep);
     aeSetAfterSleepProc(server.el,afterSleep);
-    aeMain(server.el);
+    aeMain(server.el); // 监听事件
     aeDeleteEventLoop(server.el);
     return 0;
 }

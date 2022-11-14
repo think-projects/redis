@@ -187,22 +187,22 @@ void dbAdd(redisDb *db, robj *key, robj *val) {
  *
  * The program is aborted if the key was not already present. */
 void dbOverwrite(redisDb *db, robj *key, robj *val) {
-    dictEntry *de = dictFind(db->dict,key->ptr);
+    dictEntry *de = dictFind(db->dict,key->ptr); // 根据key查找元素
 
-    serverAssertWithInfo(NULL,key,de != NULL);
+    serverAssertWithInfo(NULL,key,de != NULL); // 没有找到,中断执行
     dictEntry auxentry = *de;
     robj *old = dictGetVal(de);
     if (server.maxmemory_policy & MAXMEMORY_FLAG_LFU) {
         val->lru = old->lru;
     }
-    dictSetVal(db->dict, de, val);
+    dictSetVal(db->dict, de, val); // 设置新值
 
     if (server.lazyfree_lazy_server_del) {
         freeObjAsync(old);
         dictSetVal(db->dict, &auxentry, NULL);
     }
 
-    dictFreeVal(db->dict, &auxentry);
+    dictFreeVal(db->dict, &auxentry); // 释放值内存
 }
 
 /* High level Set operation. This function can be used in order to set
@@ -214,10 +214,11 @@ void dbOverwrite(redisDb *db, robj *key, robj *val) {
  *
  * All the new keys in the database should be created via this interface. */
 void setKey(redisDb *db, robj *key, robj *val) {
-    if (lookupKeyWrite(db,key) == NULL) {
-        dbAdd(db,key,val);
-    } else {
-        dbOverwrite(db,key,val);
+    /* 根据key在hash表中找元素 */
+    if (lookupKeyWrite(db,key) == NULL) { // 没找到
+        dbAdd(db,key,val); // 新增
+    } else { // 找到
+        dbOverwrite(db,key,val); // 修改
     }
     incrRefCount(val);
     removeExpire(db,key);

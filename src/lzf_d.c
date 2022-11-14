@@ -56,23 +56,31 @@
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wimplicit-fallthrough"
 #endif
+/**
+ * 数据解压缩
+ * @param in_data 输入数据
+ * @param in_len 输入数据长度
+ * @param out_data 输出压缩数据
+ * @param out_len 输出压缩数据长度
+ * @return
+ */
 unsigned int
 lzf_decompress (const void *const in_data,  unsigned int in_len,
                 void             *out_data, unsigned int out_len)
 {
-  u8 const *ip = (const u8 *)in_data;
-  u8       *op = (u8 *)out_data;
-  u8 const *const in_end  = ip + in_len;
-  u8       *const out_end = op + out_len;
+  u8 const *ip = (const u8 *)in_data; // 输入数据当前处理位置指针
+  u8       *op = (u8 *)out_data; // 当前输出位置
+  u8 const *const in_end  = ip + in_len; // 输入数据结束位置
+  u8       *const out_end = op + out_len; // 输出数据结束位置
 
   do
     {
-      unsigned int ctrl = *ip++;
+      unsigned int ctrl = *ip++; // 首字节地址
 
-      if (ctrl < (1 << 5)) /* literal run */
+      if (ctrl < (1 << 5)) /* literal run */ // 首字节长度<32 非压缩
         {
           ctrl++;
-
+          // 直接读取数据
           if (op + ctrl > out_end)
             {
               SET_ERRNO (E2BIG);
@@ -103,9 +111,9 @@ lzf_decompress (const void *const in_data,  unsigned int in_len,
             }
 #endif
         }
-      else /* back reference */
+      else /* back reference */ // 压缩数据
         {
-          unsigned int len = ctrl >> 5;
+          unsigned int len = ctrl >> 5; // 计算重复长度
 
           u8 *ref = op - ((ctrl & 0x1f) << 8) - 1;
 
@@ -118,7 +126,7 @@ lzf_decompress (const void *const in_data,  unsigned int in_len,
 #endif
           if (len == 7)
             {
-              len += *ip++;
+              len += *ip++; // 计算重复位置 op(输出位置)
 #if CHECK_INPUT
               if (ip >= in_end)
                 {
@@ -154,7 +162,7 @@ lzf_decompress (const void *const in_data,  unsigned int in_len,
                 if (op >= ref + len)
                   {
                     /* disjunct areas */
-                    memcpy (op, ref, len);
+                    memcpy (op, ref, len); // 数据拷贝
                     op += len;
                   }
                 else
@@ -182,7 +190,7 @@ lzf_decompress (const void *const in_data,  unsigned int in_len,
 #endif
         }
     }
-  while (ip < in_end);
+  while (ip < in_end); // 循环
 
   return op - (u8 *)out_data;
 }

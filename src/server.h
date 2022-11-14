@@ -740,7 +740,7 @@ typedef struct client {
     int reqtype;            /* Request protocol type: PROTO_REQ_* */
     int multibulklen;       /* Number of multi bulk arguments left to read. */
     long bulklen;           /* Length of bulk argument in multi bulk request. */
-    list *reply;            /* List of reply objects to send to the client. */
+    list *reply; // 应答链表 /* List of reply objects to send to the client. */
     unsigned long long reply_bytes; /* Tot bytes of objects in reply list. */
     size_t sentlen;         /* Amount of bytes already sent in the current
                                buffer or object being sent. */
@@ -778,7 +778,7 @@ typedef struct client {
 
     /* Response buffer */
     int bufpos;
-    char buf[PROTO_REPLY_CHUNK_BYTES];
+    char buf[PROTO_REPLY_CHUNK_BYTES]; // 应答缓冲区
 } client;
 
 struct saveparam {
@@ -809,20 +809,29 @@ struct sharedObjectsStruct {
 };
 
 /* ZSETs use a specialized version of Skiplists */
-typedef struct zskiplistNode {
-    sds ele;
-    double score;
-    struct zskiplistNode *backward;
-    struct zskiplistLevel {
-        struct zskiplistNode *forward;
-        unsigned long span;
+typedef struct zskiplistNode { // 跳跃表节点
+    sds ele; // 字符串
+    double score; // 分值
+    struct zskiplistNode *backward; // 指向最底层的上一个
+    struct zskiplistLevel { // 柔性数据 随机层
+        struct zskiplistNode *forward; // 指向本层的下一个
+        unsigned long span; // 本节点到下一个节点跳过的节点数
     } level[];
 } zskiplistNode;
 
-typedef struct zskiplist {
+typedef struct zskiplist { //跳跃表节点链表
+    /*
+     * head 头结点(特殊节点)
+     *  level = 64
+     *  ele = null
+     *  score = 0
+     *  backword = null
+     *  每层的forwart = null
+     * tail  尾结点
+     */
     struct zskiplistNode *header, *tail;
-    unsigned long length;
-    int level;
+    unsigned long length; // 跳跃表长度
+    int level; // 跳跃表高度 (层高 )
 } zskiplist;
 
 typedef struct zset {
@@ -1312,10 +1321,33 @@ typedef struct pubsubPattern {
 typedef void redisCommandProc(client *c);
 typedef int *redisGetKeysProc(struct redisCommand *cmd, robj **argv, int argc, int *numkeys);
 struct redisCommand {
-    char *name;
-    redisCommandProc *proc;
+    char *name; // 命令名
+    redisCommandProc *proc; // 命令处理
+    /*
+     * 参数个数校验
+     *  如果参数个数 > 0
+     *      参数个数必须等于arity ;
+     *  如果参数个数 < 0
+     *      参数个数大于等于arity
+     * 命令本身也是参数
+     *  get name => arity=2
+     */
     int arity;
+    /*
+     * 命令表示
+     *  r: 写命令
+     *  w: 读命令
+     *  F: 命令超时,会记录延时 slowlog
+     *  m: 如果内存不足,就不执行
+     * 组合出现
+     *  rF: 读命令,命令超时,会记录延时 slowlog
+     *  wm: 写命令,如果内存不足,就不执行
+     */
     char *sflags; /* Flags as string representation, one char per flag. */
+    /*
+     * 命令的二进制表示
+     * *sflags => 二进制
+     */
     int flags;    /* The actual flags, obtained from the 'sflags' field. */
     /* Use a function to determine keys arguments in a command line.
      * Used for Redis Cluster redirect. */
@@ -1324,6 +1356,10 @@ struct redisCommand {
     int firstkey; /* The first argument that's a key (0 = no keys) */
     int lastkey;  /* The last argument that's a key */
     int keystep;  /* The step between first and last key */
+    /*
+     * microseconds: 从服务器启动至今,命令执行时间
+     * calls: 从服务器启动至今,命令执行次数
+     */
     long long microseconds, calls;
 };
 

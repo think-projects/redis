@@ -93,12 +93,31 @@
  * it must be compressed back into a single node.
  *
  */
-
+// 基数数节点
 #define RAX_NODE_MAX_SIZE ((1<<29)-1)
 typedef struct raxNode {
+    /*
+     * 是否包括key
+     *  1:是
+     *  0:否
+     */
     uint32_t iskey:1;     /* Does this node contain a key? */
+    /*
+     * key指向的vlaue是否存在(value-ptr)
+     *  1:空
+     *  0:非空
+     */
     uint32_t isnull:1;    /* Associated value is NULL (don't store it). */
+    /*
+     * 是否压缩
+     *  1:压缩
+     *  0:非压缩
+     */
     uint32_t iscompr:1;   /* Node is compressed. */
+    /*
+     * 非压缩: 子节点个数
+     * 压缩:字符串长度
+     */
     uint32_t size:29;     /* Number of children, or compressed string len. */
     /* Data layout is as follows:
      *
@@ -126,27 +145,37 @@ typedef struct raxNode {
      * (isnull=0), then after the raxNode pointers poiting to the
      * children, an additional value pointer is present (as you can see
      * in the representation above as "value-ptr" field).
+     *
+     * 柔性数组
+     *  字符串数据
+     *  子节点指针
+     *
+     *       value指针(不一定存在)
      */
     unsigned char data[];
 } raxNode;
-
+// rax 树
 typedef struct rax {
-    raxNode *head;
-    uint64_t numele;
-    uint64_t numnodes;
+    raxNode *head; // 指向头(根)节点的指针
+    uint64_t numele; // 元素数(key的数)
+    uint64_t numnodes; // 节点数
 } rax;
-
+// rax栈 用于存储根节点到当前节点的遍历路径
 /* Stack data structure used by raxLowWalk() in order to, optionally, return
  * a list of parent nodes to the caller. The nodes do not have a "parent"
  * field for space concerns, so we use the auxiliary stack when needed. */
 #define RAX_STACK_STATIC_ITEMS 32
 typedef struct raxStack {
-    void **stack; /* Points to static_items or an heap allocated array. */
+    void **stack; /* Points to static_items or an heap allocated array. */ // 指向static_items或者堆内存
+    /*
+     * items: 已使用
+     * maxitems: 总空间
+     */
     size_t items, maxitems; /* Number of items contained and total space. */
     /* Up to RAXSTACK_STACK_ITEMS items we avoid to allocate on the heap
      * and use this static array of pointers instead. */
-    void *static_items[RAX_STACK_STATIC_ITEMS];
-    int oom; /* True if pushing into this stack failed for OOM at some point. */
+    void *static_items[RAX_STACK_STATIC_ITEMS]; // 数组指针 指向存储的路径 32
+    int oom; /* True if pushing into this stack failed for OOM at some point. */ // 是否有栈溢出
 } raxStack;
 
 /* Optional callback used for iterators and be notified on each rax node,
@@ -162,27 +191,30 @@ typedef struct raxStack {
  * Redis application for this callback).
  *
  * This is currently only supported in forward iterations (raxNext) */
-typedef int (*raxNodeCallback)(raxNode **noderef);
+typedef int (*raxNodeCallback)(raxNode **noderef); // rax回调函数
 
 /* Radix tree iterator state is encapsulated into this data structure. */
-#define RAX_ITER_STATIC_LEN 128
+#define RAX_ITER_STATIC_LEN 128 // key_staic_string 最大长度
+/* flags 标识 */
+
 #define RAX_ITER_JUST_SEEKED (1<<0) /* Iterator was just seeked. Return current
                                        element for the first iteration and
-                                       clear the flag. */
-#define RAX_ITER_EOF (1<<1)    /* End of iteration reached. */
+                                       clear the flag. */ // 刚搜索过的 可直接返回元素并清空标识 1
+#define RAX_ITER_EOF (1<<1)    /* End of iteration reached. */ // rax的最后一个节点 2
 #define RAX_ITER_SAFE (1<<2)   /* Safe iterator, allows operations while
-                                  iterating. But it is slower. */
+                                  iterating. But it is slower. */ // 安全迭代器 允许操作 4
+/* rax迭代器 遍历key */
 typedef struct raxIterator {
-    int flags;
-    rax *rt;                /* Radix tree we are iterating. */
-    unsigned char *key;     /* The current string. */
-    void *data;             /* Data associated to this key. */
-    size_t key_len;         /* Current key length. */
-    size_t key_max;         /* Max key len the current key buffer can hold. */
-    unsigned char key_static_string[RAX_ITER_STATIC_LEN];
-    raxNode *node;          /* Current node. Only for unsafe iteration. */
-    raxStack stack;         /* Stack used for unsafe iteration. */
-    raxNodeCallback node_cb; /* Optional node callback. Normally set to NULL. */
+    int flags; // 标识 3种
+    rax *rt;                /* Radix tree we are iterating. */ // 指向正在迭代的rax树
+    unsigned char *key;     /* The current string. */ // 迭代到的当前key
+    void *data;             /* Data associated to this key. */ // key所对应的value
+    size_t key_len;         /* Current key length. */ // 当前key的长度
+    size_t key_max;         /* Max key len the current key buffer can hold. */ // 当前key最大长度
+    unsigned char key_static_string[RAX_ITER_STATIC_LEN]; // 存储遍历过的key 超过128个则使用堆内存
+    raxNode *node;          /* Current node. Only for unsafe iteration. */ // 遍历到的当前节点
+    raxStack stack;         /* Stack used for unsafe iteration. */ // 存储根节点到当前路径
+    raxNodeCallback node_cb; /* Optional node callback. Normally set to NULL. */ // 节点回调函数 一般不用
 } raxIterator;
 
 /* A special pointer returned for not found items. */
