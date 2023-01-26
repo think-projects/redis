@@ -127,7 +127,13 @@ void bioInit(void) {
         bio_threads[j] = thread;
     }
 }
-
+/**
+ * 添加任务执行列表
+ * @param type
+ * @param arg1
+ * @param arg2
+ * @param arg3
+ */
 void bioCreateBackgroundJob(int type, void *arg1, void *arg2, void *arg3) {
     struct bio_job *job = zmalloc(sizeof(*job));
 
@@ -136,12 +142,16 @@ void bioCreateBackgroundJob(int type, void *arg1, void *arg2, void *arg3) {
     job->arg2 = arg2;
     job->arg3 = arg3;
     pthread_mutex_lock(&bio_mutex[type]);
-    listAddNodeTail(bio_jobs[type],job);
+    listAddNodeTail(bio_jobs[type],job); // 添加到任务列表中
     bio_pending[type]++;
     pthread_cond_signal(&bio_newjob_cond[type]);
     pthread_mutex_unlock(&bio_mutex[type]);
 }
-
+/**
+ * 执行执行任务列表中的job
+ * @param arg
+ * @return
+ */
 void *bioProcessBackgroundJobs(void *arg) {
     struct bio_job *job;
     unsigned long type = (unsigned long) arg;
@@ -184,16 +194,16 @@ void *bioProcessBackgroundJobs(void *arg) {
         pthread_mutex_unlock(&bio_mutex[type]);
 
         /* Process the job accordingly to its type. */
-        if (type == BIO_CLOSE_FILE) {
+        if (type == BIO_CLOSE_FILE) { // 关闭文件
             close((long)job->arg1);
-        } else if (type == BIO_AOF_FSYNC) {
+        } else if (type == BIO_AOF_FSYNC) { // AOF落盘
             redis_fsync((long)job->arg1);
-        } else if (type == BIO_LAZY_FREE) {
+        } else if (type == BIO_LAZY_FREE) { // 懒删除
             /* What we free changes depending on what arguments are set:
              * arg1 -> free the object at pointer.
              * arg2 & arg3 -> free two dictionaries (a Redis DB).
              * only arg3 -> free the skiplist. */
-            if (job->arg1)
+            if (job->arg1) // 删除对象
                 lazyfreeFreeObjectFromBioThread(job->arg1);
             else if (job->arg2 && job->arg3)
                 lazyfreeFreeDatabaseFromBioThread(job->arg2,job->arg3);

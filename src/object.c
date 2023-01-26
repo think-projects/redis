@@ -37,16 +37,23 @@
 #endif
 
 /* ===================== Creation and parsing of objects ==================== */
-
+/**
+ * 创建对象
+ * @param type
+ * @param ptr
+ * @return
+ */
 robj *createObject(int type, void *ptr) {
-    robj *o = zmalloc(sizeof(*o));
+    robj *o = zmalloc(sizeof(*o)); // 申请内存
+    // 初始化属性
     o->type = type;
     o->encoding = OBJ_ENCODING_RAW;
     o->ptr = ptr;
-    o->refcount = 1;
+    o->refcount = 1; // 引用计数为1
 
     /* Set the LRU to the current lruclock (minutes resolution), or
      * alternatively the LFU counter. */
+    // lfu unix时间分钟赋值给 高16位
     if (server.maxmemory_policy & MAXMEMORY_FLAG_LFU) {
         o->lru = (LFUGetTimeInMinutes()<<8) | LFU_INIT_VAL;
     } else {
@@ -224,7 +231,7 @@ robj *createZiplistObject(void) {
     o->encoding = OBJ_ENCODING_ZIPLIST;
     return o;
 }
-
+/** 创建一个dict
 robj *createSetObject(void) {
     dict *d = dictCreate(&setDictType,NULL);
     robj *o = createObject(OBJ_SET,d);
@@ -238,11 +245,14 @@ robj *createIntsetObject(void) {
     o->encoding = OBJ_ENCODING_INTSET;
     return o;
 }
-
+/**
+ * 创建新的hash 编码为ziplist
+ * @return
+ */
 robj *createHashObject(void) {
-    unsigned char *zl = ziplistNew();
-    robj *o = createObject(OBJ_HASH, zl);
-    o->encoding = OBJ_ENCODING_ZIPLIST;
+    unsigned char *zl = ziplistNew(); // 创建ziplist
+    robj *o = createObject(OBJ_HASH, zl); // ptr指向zl
+    o->encoding = OBJ_ENCODING_ZIPLIST; // 编码类型赋值ziplist
     return o;
 }
 
@@ -345,14 +355,20 @@ void freeModuleObject(robj *o) {
 void freeStreamObject(robj *o) {
     freeStream(o->ptr);
 }
-
+/**
+ * 自增引用计数
+ * @param o
+ */
 void incrRefCount(robj *o) {
-    if (o->refcount != OBJ_SHARED_REFCOUNT) o->refcount++;
+    if (o->refcount != OBJ_SHARED_REFCOUNT) o->refcount++; // 如果引用计数不等于int的最大值 则引用计数自增
 }
-
+/**
+ * 自减引用计数
+ * @param o
+ */
 void decrRefCount(robj *o) {
-    if (o->refcount == 1) {
-        switch(o->type) {
+    if (o->refcount == 1) { // 如果引用计数等于1 再减1就是0 就要释放对象
+        switch(o->type) { // 判断对象类型释放值
         case OBJ_STRING: freeStringObject(o); break;
         case OBJ_LIST: freeListObject(o); break;
         case OBJ_SET: freeSetObject(o); break;
@@ -362,10 +378,10 @@ void decrRefCount(robj *o) {
         case OBJ_STREAM: freeStreamObject(o); break;
         default: serverPanic("Unknown object type"); break;
         }
-        zfree(o);
-    } else {
+        zfree(o); // 释放redisObject
+    } else { // 不是1
         if (o->refcount <= 0) serverPanic("decrRefCount against refcount <= 0");
-        if (o->refcount != OBJ_SHARED_REFCOUNT) o->refcount--;
+        if (o->refcount != OBJ_SHARED_REFCOUNT) o->refcount--; // 自减1
     }
 }
 
@@ -392,7 +408,13 @@ robj *resetRefCount(robj *obj) {
     obj->refcount = 0;
     return obj;
 }
-
+/**
+ * 检测对象类型
+ * @param c
+ * @param o
+ * @param type
+ * @return
+ */
 int checkType(client *c, robj *o, int type) {
     if (o->type != type) {
         addReply(c,shared.wrongtypeerr);
@@ -695,9 +717,9 @@ int getLongLongFromObject(robj *o, long long *target) {
         value = 0;
     } else {
         serverAssertWithInfo(NULL,o,o->type == OBJ_STRING);
-        if (sdsEncodedObject(o)) {
-            if (string2ll(o->ptr,sdslen(o->ptr),&value) == 0) return C_ERR;
-        } else if (o->encoding == OBJ_ENCODING_INT) {
+        if (sdsEncodedObject(o))  // 编码是OBJ_ENCODING_RAW || OBJ_ENCODING_EMBSTR
+            if (string2ll(o->ptr,sdslen(o->ptr),&value) == 0) return C_ERR; // 字符串转整数 long long
+        } else if (o->encoding == OBJ_ENCODING_INT) { // 编码是 OBJ_ENCODING_INT
             value = (long)o->ptr;
         } else {
             serverPanic("Unknown string encoding");
@@ -1238,11 +1260,17 @@ void objectSetLRUOrLFU(robj *val, long long lfu_freq, long long lru_idle,
 
 /* This is a helper function for the OBJECT command. We need to lookup keys
  * without any modification of LRU or other parameters. */
+/**
+ * 根据key取value
+ * @param c
+ * @param key
+ * @return
+ */
 robj *objectCommandLookup(client *c, robj *key) {
     dictEntry *de;
 
-    if ((de = dictFind(c->db->dict,key->ptr)) == NULL) return NULL;
-    return (robj*) dictGetVal(de);
+    if ((de = dictFind(c->db->dict,key->ptr)) == NULL) return NULL; // 客户端的db的字典中
+    return (robj*) dictGetVal(de); // 返回找到的redisObject
 }
 
 robj *objectCommandLookupOrReply(client *c, robj *key, robj *reply) {
@@ -1254,10 +1282,15 @@ robj *objectCommandLookupOrReply(client *c, robj *key, robj *reply) {
 
 /* Object command allows to inspect the internals of an Redis Object.
  * Usage: OBJECT <refcount|encoding|idletime|freq> <key> */
+/**
+ * object命令
+ * args[0]:object args[1]:子命令 args[2]:key
+ * @param c
+ */
 void objectCommand(client *c) {
     robj *o;
 
-    if (c->argc == 2 && !strcasecmp(c->argv[1]->ptr,"help")) {
+    if (c->argc == 2 && !strcasecmp(c->argv[1]->ptr,"help")) { // 子命令是help
         const char *help[] = {
 "ENCODING <key> -- Return the kind of internal representation used in order to store the value associated with a key.",
 "FREQ <key> -- Return the access frequency index of the key. The returned integer is proportional to the logarithm of the recent access frequency of the key.",
@@ -1265,37 +1298,37 @@ void objectCommand(client *c) {
 "REFCOUNT <key> -- Return the number of references of the value associated with the specified key.",
 NULL
         };
-        addReplyHelp(c, help);
-    } else if (!strcasecmp(c->argv[1]->ptr,"refcount") && c->argc == 3) {
+        addReplyHelp(c, help); // 响应help命令
+    } else if (!strcasecmp(c->argv[1]->ptr,"refcount") && c->argc == 3) {  // 子命令是refcount
+        if ((o = objectCommandLookupOrReply(c,c->argv[2],shared.nullbulk))
+                == NULL) return; // 根据key获得value(redisObject)
+        addReplyLongLong(c,o->refcount); // 响应redisObject的引用计数
+    } else if (!strcasecmp(c->argv[1]->ptr,"encoding") && c->argc == 3) { // 子命令是encoding
         if ((o = objectCommandLookupOrReply(c,c->argv[2],shared.nullbulk))
                 == NULL) return;
-        addReplyLongLong(c,o->refcount);
-    } else if (!strcasecmp(c->argv[1]->ptr,"encoding") && c->argc == 3) {
+        addReplyBulkCString(c,strEncoding(o->encoding)); // 响应redisObject的编码
+    } else if (!strcasecmp(c->argv[1]->ptr,"idletime") && c->argc == 3) { // idletime
         if ((o = objectCommandLookupOrReply(c,c->argv[2],shared.nullbulk))
-                == NULL) return;
-        addReplyBulkCString(c,strEncoding(o->encoding));
-    } else if (!strcasecmp(c->argv[1]->ptr,"idletime") && c->argc == 3) {
-        if ((o = objectCommandLookupOrReply(c,c->argv[2],shared.nullbulk))
-                == NULL) return;
-        if (server.maxmemory_policy & MAXMEMORY_FLAG_LFU) {
-            addReplyError(c,"An LFU maxmemory policy is selected, idle time not tracked. Please note that when switching between policies at runtime LRU and LFU data will take some time to adjust.");
+                == NULL) return;// 根据key获得value(redisObject)
+        if (server.maxmemory_policy & MAXMEMORY_FLAG_LFU) { // 策略是LFU
+            addReplyError(c,"An LFU maxmemory policy is selected, idle time not tracked. Please note that when switching between policies at runtime LRU and LFU data will take some time to adjust."); // 响应错误
             return;
         }
-        addReplyLongLong(c,estimateObjectIdleTime(o)/1000);
-    } else if (!strcasecmp(c->argv[1]->ptr,"freq") && c->argc == 3) {
+        addReplyLongLong(c,estimateObjectIdleTime(o)/1000); // 响应idletime
+    } else if (!strcasecmp(c->argv[1]->ptr,"freq") && c->argc == 3) { // 子命令是freq
         if ((o = objectCommandLookupOrReply(c,c->argv[2],shared.nullbulk))
-                == NULL) return;
-        if (!(server.maxmemory_policy & MAXMEMORY_FLAG_LFU)) {
-            addReplyError(c,"An LFU maxmemory policy is not selected, access frequency not tracked. Please note that when switching between policies at runtime LRU and LFU data will take some time to adjust.");
+                == NULL) return;// 根据key获得value(redisObject)
+        if (!(server.maxmemory_policy & MAXMEMORY_FLAG_LFU)) { // 策略不是LFU
+            addReplyError(c,"An LFU maxmemory policy is not selected, access frequency not tracked. Please note that when switching between policies at runtime LRU and LFU data will take some time to adjust."); // 响应错误
             return;
         }
         /* LFUDecrAndReturn should be called
          * in case of the key has not been accessed for a long time,
          * because we update the access time only
          * when the key is read or overwritten. */
-        addReplyLongLong(c,LFUDecrAndReturn(o));
+        addReplyLongLong(c,LFUDecrAndReturn(o)); // 响应反应频次
     } else {
-        addReplySubcommandSyntaxError(c);
+        addReplySubcommandSyntaxError(c); // 响应子命令语法错误
     }
 }
 

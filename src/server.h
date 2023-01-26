@@ -465,11 +465,11 @@ typedef long long ustime_t; /* microsecond time type. */
 /* A redis object, that is a type able to hold a string / list / set */
 
 /* The actual Redis Object */
-#define OBJ_STRING 0    /* String object. */
-#define OBJ_LIST 1      /* List object. */
-#define OBJ_SET 2       /* Set object. */
-#define OBJ_ZSET 3      /* Sorted set object. */
-#define OBJ_HASH 4      /* Hash object. */
+#define OBJ_STRING 0    /* String object. */ // 字符串
+#define OBJ_LIST 1      /* List object. */ // 列表
+#define OBJ_SET 2       /* Set object. */ // 集合
+#define OBJ_ZSET 3      /* Sorted set object. */ // 有序集合
+#define OBJ_HASH 4      /* Hash object. */ // 散列
 
 /* The "module" object type is a special one that signals that the object
  * is one directly managed by a Redis module. In this case the value points
@@ -482,8 +482,8 @@ typedef long long ustime_t; /* microsecond time type. */
  * by a 64 bit module type ID, which has a 54 bits module-specific signature
  * in order to dispatch the loading to the right module, plus a 10 bits
  * encoding version. */
-#define OBJ_MODULE 5    /* Module object. */
-#define OBJ_STREAM 6    /* Stream object. */
+#define OBJ_MODULE 5    /* Module object. */ // 模块
+#define OBJ_STREAM 6    /* Stream object. */ // 流
 
 /* Extract encver / signature from a module type ID. */
 #define REDISMODULE_TYPE_ENCVER_BITS 10
@@ -596,31 +596,34 @@ typedef struct RedisModuleDigest {
 /* Objects encoding. Some kind of objects like Strings and Hashes can be
  * internally represented in multiple ways. The 'encoding' field of the object
  * is set to one of this fields for this object. */
-#define OBJ_ENCODING_RAW 0     /* Raw representation */
-#define OBJ_ENCODING_INT 1     /* Encoded as integer */
-#define OBJ_ENCODING_HT 2      /* Encoded as hash table */
-#define OBJ_ENCODING_ZIPMAP 3  /* Encoded as zipmap */
-#define OBJ_ENCODING_LINKEDLIST 4 /* No longer used: old list encoding. */
-#define OBJ_ENCODING_ZIPLIST 5 /* Encoded as ziplist */
-#define OBJ_ENCODING_INTSET 6  /* Encoded as intset */
-#define OBJ_ENCODING_SKIPLIST 7  /* Encoded as skiplist */
-#define OBJ_ENCODING_EMBSTR 8  /* Embedded sds string encoding */
-#define OBJ_ENCODING_QUICKLIST 9 /* Encoded as linked list of ziplists */
-#define OBJ_ENCODING_STREAM 10 /* Encoded as a radix tree of listpacks */
+#define OBJ_ENCODING_RAW 0     /* Raw representation */ // 普通的sds
+#define OBJ_ENCODING_INT 1     /* Encoded as integer */ // 蒸熟
+#define OBJ_ENCODING_HT 2      /* Encoded as hash table */ // 散列表
+#define OBJ_ENCODING_ZIPMAP 3  /* Encoded as zipmap */ // 压缩字典
+#define OBJ_ENCODING_LINKEDLIST 4 /* No longer used: old list encoding. */ // 双向链表
+#define OBJ_ENCODING_ZIPLIST 5 /* Encoded as ziplist */ // 压缩列表
+#define OBJ_ENCODING_INTSET 6  /* Encoded as intset */ // 整数集合
+#define OBJ_ENCODING_SKIPLIST 7  /* Encoded as skiplist */ // 跳跃表
+#define OBJ_ENCODING_EMBSTR 8  /* Embedded sds string encoding */ // 简单的sds(小于44个byte)
+#define OBJ_ENCODING_QUICKLIST 9 /* Encoded as linked list of ziplists */ // 快速列表
+#define OBJ_ENCODING_STREAM 10 /* Encoded as a radix tree of listpacks */ // listpack的rax
 
 #define LRU_BITS 24
 #define LRU_CLOCK_MAX ((1<<LRU_BITS)-1) /* Max value of obj->lru */
 #define LRU_CLOCK_RESOLUTION 1000 /* LRU clock resolution in ms */
 
 #define OBJ_SHARED_REFCOUNT INT_MAX
+/**
+ * redis对象 用于封装value
+ */
 typedef struct redisObject {
-    unsigned type:4;
-    unsigned encoding:4;
+    unsigned type:4; // value的类型
+    unsigned encoding:4; // value的编码
     unsigned lru:LRU_BITS; /* LRU time (relative to global lru_clock) or
                             * LFU data (least significant 8 bits frequency
-                            * and most significant 16 bits access time). */
-    int refcount;
-    void *ptr;
+                            * and most significant 16 bits access time). */ // 最近访问时间或访问频次
+    int refcount; // 引用对象指针
+    void *ptr; // 指向具体值的指针
 } robj;
 
 /* Macro used to initialize a Redis object allocated on the stack.
@@ -646,15 +649,16 @@ typedef struct clientReplyBlock {
 /* Redis database representation. There are multiple databases identified
  * by integers from 0 (the default database) up to the max configured
  * database. The database number is the 'id' field in the structure. */
+// redis数据库
 typedef struct redisDb {
-    dict *dict;                 /* The keyspace for this DB */
-    dict *expires;              /* Timeout of keys with a timeout set */
-    dict *blocking_keys;        /* Keys with clients waiting for data (BLPOP)*/
-    dict *ready_keys;           /* Blocked keys that received a PUSH */
-    dict *watched_keys;         /* WATCHED keys for MULTI/EXEC CAS */
-    int id;                     /* Database ID */
-    long long avg_ttl;          /* Average TTL, just for stats */
-    list *defrag_later;         /* List of key names to attempt to defrag one by one, gradually. */
+    dict *dict;                 /* The keyspace for this DB */ // 数据库键 key:键 value:redisObject
+    dict *expires;              /* Timeout of keys with a timeout set */ // 键过期时间 key:键 value:有效期(秒)
+    dict *blocking_keys;        /* Keys with clients waiting for data (BLPOP)*/ // 阻塞的键 key:阻塞的键 value:被阻塞的client
+    dict *ready_keys;           /* Blocked keys that received a PUSH */ // 解除阻塞的键 key:要解除阻塞的键 value:要解除阻塞的client
+    dict *watched_keys;         /* WATCHED keys for MULTI/EXEC CAS */ // watch的键 key:watch的键 value:client
+    int id;                     /* Database ID */ // 数据库id: 0-15
+    long long avg_ttl;          /* Average TTL, just for stats */ // 平均有效期
+    list *defrag_later;         /* List of key names to attempt to defrag one by one, gradually. */ // 尝试碎片整理的key列表
 } redisDb;
 
 /* Client MULTI/EXEC state */
@@ -715,6 +719,7 @@ typedef struct blockingState {
  * also called ready_keys in every structure representing a Redis database,
  * where we make sure to remember if a given key was already added in the
  * server.ready_keys list. */
+// 要解除阻塞的List
 typedef struct readyList {
     redisDb *db;
     robj *key;
@@ -722,33 +727,36 @@ typedef struct readyList {
 
 /* With multiplexing we need to take per-client state.
  * Clients are taken in a linked list. */
+/**
+ * 客户端
+ */
 typedef struct client {
-    uint64_t id;            /* Client incremental unique ID. */
-    int fd;                 /* Client socket. */
-    redisDb *db;            /* Pointer to currently SELECTed DB. */
-    robj *name;             /* As set by CLIENT SETNAME. */
-    sds querybuf;           /* Buffer we use to accumulate client queries. */
-    size_t qb_pos;          /* The position we have read in querybuf. */
+    uint64_t id;            /* Client incremental unique ID. */ // 客户端的唯一自增id
+    int fd;                 /* Client socket. */  // -1:伪客户端 AOF或lua 正常:大于-1的整数
+    redisDb *db;            /* Pointer to currently SELECTed DB. */ // 当前client端操作的db select dbnum
+    robj *name;             /* As set by CLIENT SETNAME. */ // 客户端名称 setname
+    sds querybuf;           /* Buffer we use to accumulate client queries. */ // 输入缓存区 保存命令
+    size_t qb_pos;          /* The position we have read in querybuf. */ // 输入缓冲区读取的位置
     sds pending_querybuf;   /* If this client is flagged as master, this buffer
                                represents the yet not applied portion of the
                                replication stream that we are receiving from
                                the master. */
     size_t querybuf_peak;   /* Recent (100ms or more) peak of querybuf size. */
-    int argc;               /* Num of arguments of current command. */
-    robj **argv;            /* Arguments of current command. */
-    struct redisCommand *cmd, *lastcmd;  /* Last command executed. */
+    int argc;               /* Num of arguments of current command. */ // 参数个数
+    robj **argv;            /* Arguments of current command. */ // 参数数组 sds
+    struct redisCommand *cmd, *lastcmd;  /* Last command executed. */ // 最后执行的命令
     int reqtype;            /* Request protocol type: PROTO_REQ_* */
     int multibulklen;       /* Number of multi bulk arguments left to read. */
     long bulklen;           /* Length of bulk argument in multi bulk request. */
-    list *reply; // 应答链表 /* List of reply objects to send to the client. */
-    unsigned long long reply_bytes; /* Tot bytes of objects in reply list. */
+    list *reply;            /* List of reply objects to send to the client. */ // 应答链表
+    unsigned long long reply_bytes; /* Tot bytes of objects in reply list. */ // 应答列表的总自结束
     size_t sentlen;         /* Amount of bytes already sent in the current
                                buffer or object being sent. */
     time_t ctime;           /* Client creation time. */
-    time_t lastinteraction; /* Time of the last interaction, used for timeout */
+    time_t lastinteraction; /* Time of the last interaction, used for timeout */ // 客户端于服务器最后一次互动时间 用于计算超时 server：maxidletime
     time_t obuf_soft_limit_reached_time;
     int flags;              /* Client flags: CLIENT_* macros. */
-    int authenticated;      /* When requirepass is non-NULL. */
+    int authenticated;      /* When requirepass is non-NULL. */ // 是否通过身份认证 1:通过 0:未通过
     int replstate;          /* Replication state if this is a slave. */
     int repl_put_online_on_ack; /* Install slave write handler on first ACK. */
     int repldbfd;           /* Replication DB file descriptor. */
@@ -777,7 +785,7 @@ typedef struct client {
     listNode *client_list_node; /* list node in client list */
 
     /* Response buffer */
-    int bufpos;
+    int bufpos; // 写入的缓冲区位置
     char buf[PROTO_REPLY_CHUNK_BYTES]; // 应答缓冲区
 } client;
 
@@ -947,23 +955,25 @@ struct clusterState;
 #define CHILD_INFO_MAGIC 0xC17DDA7A12345678LL
 #define CHILD_INFO_TYPE_RDB 0
 #define CHILD_INFO_TYPE_AOF 1
-
+/**
+ * 服务器
+ */
 struct redisServer {
     /* General */
     pid_t pid;                  /* Main process pid. */
-    char *configfile;           /* Absolute config file path, or NULL */
+    char *configfile;           /* Absolute config file path, or NULL */ // 配置文件redis.conf的决定路径
     char *executable;           /* Absolute executable file path. */
     char **exec_argv;           /* Executable argv vector (copy). */
     int dynamic_hz;             /* Change hz value depending on # of clients. */
     int config_hz;              /* Configured HZ value. May be different than
                                    the actual 'hz' field value if dynamic-hz
                                    is enabled. */
-    int hz;                     /* serverCron() calls frequency in hertz */
-    redisDb *db;
-    dict *commands;             /* Command table */
+    int hz;                     /* serverCron() calls frequency in hertz */ // serverCron的执行频次
+    redisDb *db; // 数据库的数组
+    dict *commands;             /* Command table */ // 命令库 key:命令名 value:redisCommand
     dict *orig_commands;        /* Command table before command renaming. */
-    aeEventLoop *el;
-    unsigned int lruclock;      /* Clock for LRU eviction */
+    aeEventLoop *el; // 事件循环
+    unsigned int lruclock;      /* Clock for LRU eviction */ //LRU时间戳
     int shutdown_asap;          /* SHUTDOWN needed ASAP */
     int activerehashing;        /* Incremental rehash in serverCron() */
     int active_defrag_running;  /* Active defragmentation running (holds current scan aggressiveness) */
@@ -985,18 +995,18 @@ struct redisServer {
                                    client blocked on a module command needs
                                    to be processed. */
     /* Networking */
-    int port;                   /* TCP listening port */
+    int port;                   /* TCP listening port */ // 端口 默认6379
     int tcp_backlog;            /* TCP listen() backlog */
-    char *bindaddr[CONFIG_BINDADDR_MAX]; /* Addresses we should bind to */
+    char *bindaddr[CONFIG_BINDADDR_MAX]; /* Addresses we should bind to */ // 绑定ip地址 数组 最多16个
     int bindaddr_count;         /* Number of addresses in server.bindaddr[] */
-    char *unixsocket;           /* UNIX socket path */
+    char *unixsocket;           /* UNIX socket path */ // socket路径
     mode_t unixsocketperm;      /* UNIX socket permission */
-    int ipfd[CONFIG_BINDADDR_MAX]; /* TCP socket file descriptors */
-    int ipfd_count;             /* Used slots in ipfd[] */
+    int ipfd[CONFIG_BINDADDR_MAX]; /* TCP socket file descriptors */ // 在ip上建立的socket文件描述符
+    int ipfd_count;             /* Used slots in ipfd[] */ // socket文件描述符数量
     int sofd;                   /* Unix socket file descriptor */
     int cfd[CONFIG_BINDADDR_MAX];/* Cluster bus listening socket */
     int cfd_count;              /* Used slots in cfd[] */
-    list *clients;              /* List of active clients */
+    list *clients;              /* List of active clients */ // 活动的client列表
     list *clients_to_close;     /* Clients to close asynchronously */
     list *clients_pending_write; /* There is to write or install handler. */
     list *slaves, *monitors;    /* List of slaves and MONITORs */
@@ -1015,7 +1025,7 @@ struct redisServer {
     off_t loading_loaded_bytes;
     time_t loading_start_time;
     off_t loading_process_events_interval_bytes;
-    /* Fast pointers to often looked up command */
+    /* Fast pointers to often looked up command */ // 最常使用的命令
     struct redisCommand *delCommand, *multiCommand, *lpushCommand,
                         *lpopCommand, *rpopCommand, *zpopminCommand,
                         *zpopmaxCommand, *sremCommand, *execCommand,
@@ -1073,13 +1083,13 @@ struct redisServer {
     int active_defrag_cycle_max;       /* maximal effort for defrag in CPU percentage */
     unsigned long active_defrag_max_scan_fields; /* maximum number of fields of set/hash/zset/list to process from within the main dict scan */
     size_t client_max_querybuf_len; /* Limit for client query buffer length */
-    int dbnum;                      /* Total number of configured DBs */
+    int dbnum;                      /* Total number of configured DBs */ // 数据库数量
     int supervised;                 /* 1 if supervised, 0 otherwise. */
     int supervised_mode;            /* See SUPERVISED_* */
     int daemonize;                  /* True if running as a daemon */
     clientBufferLimitsConfig client_obuf_limits[CLIENT_TYPE_OBUF_COUNT];
     /* AOF persistence */
-    int aof_state;                  /* AOF_(ON|OFF|WAIT_REWRITE) */
+    int aof_state;                  /* AOF_(ON|OFF|WAIT_REWRITE) */ // AOF状态
     int aof_fsync;                  /* Kind of fsync() policy */
     char *aof_filename;             /* Name of the AOF file */
     int aof_no_fsync_on_rewrite;    /* Don't fsync if a rewrite is in prog. */
@@ -1174,7 +1184,7 @@ struct redisServer {
     int repl_diskless_sync_delay;   /* Delay to start a diskless repl BGSAVE. */
     /* Replication (slave) */
     char *masterauth;               /* AUTH with this password with master */
-    char *masterhost;               /* Hostname of master */
+    char *masterhost;               /* Hostname of master */ // master的主机名
     int masterport;                 /* Port of master */
     int repl_timeout;               /* Timeout after N seconds of master idle */
     client *master;     /* Client that is master for this slave */
@@ -1981,6 +1991,7 @@ void evictionPoolAlloc(void);
 #define LFU_INIT_VAL 5
 unsigned long LFUGetTimeInMinutes(void);
 uint8_t LFULogIncr(uint8_t value);
+// 计算衰减
 unsigned long LFUDecrAndReturn(robj *o);
 
 /* Keys hashing / comparison functions for dict.c hash tables. */

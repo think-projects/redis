@@ -611,23 +611,24 @@ void signalKeyAsReady(redisDb *db, robj *key) {
     readyList *rl;
 
     /* No clients blocking for this key? No need to queue it. */
-    if (dictFind(db->blocking_keys,key) == NULL) return;
+    if (dictFind(db->blocking_keys,key) == NULL) return; // 该key不是阻塞key
 
     /* Key was already signaled? No need to queue it again. */
-    if (dictFind(db->ready_keys,key) != NULL) return;
+    if (dictFind(db->ready_keys,key) != NULL) return; // 该key已经是要解除阻塞的了
 
     /* Ok, we need to queue this key into server.ready_keys. */
-    rl = zmalloc(sizeof(*rl));
+    rl = zmalloc(sizeof(*rl)); // 申请空间
+    // 赋值
     rl->key = key;
     rl->db = db;
-    incrRefCount(key);
-    listAddNodeTail(server.ready_keys,rl);
+    incrRefCount(key); // 给key增加refCount
+    listAddNodeTail(server.ready_keys,rl); // 把rl添加到read_keys的尾
 
     /* We also add the key in the db->ready_keys dictionary in order
      * to avoid adding it multiple times into a list with a simple O(1)
      * check. */
     incrRefCount(key);
-    serverAssert(dictAdd(db->ready_keys,key,NULL) == DICT_OK);
+    serverAssert(dictAdd(db->ready_keys,key,NULL) == DICT_OK); // 把key添加到db的read_keys
 }
 
 

@@ -1009,9 +1009,9 @@ void clientsCron(void) {
 void databasesCron(void) {
     /* Expire keys by random sampling. Not required for slaves
      * as master will synthesize DELs for us. */
-    if (server.active_expire_enabled) {
-        if (server.masterhost == NULL) {
-            activeExpireCycle(ACTIVE_EXPIRE_CYCLE_SLOW);
+    if (server.active_expire_enabled) { // 开启定期删除
+        if (server.masterhost == NULL) { // 是master
+            activeExpireCycle(ACTIVE_EXPIRE_CYCLE_SLOW); // 慢速过期删除
         } else {
             expireSlaveKeys();
         }
@@ -1155,7 +1155,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
      *
      * Note that you can change the resolution altering the
      * LRU_CLOCK_RESOLUTION define. */
-    unsigned long lruclock = getLRUClock();
+    unsigned long lruclock = getLRUClock(); // 赋值
     atomicSet(server.lruclock,lruclock);
 
     /* Record the max memory used since the server was started. */
@@ -1377,6 +1377,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
 /* This function gets called every time Redis is entering the
  * main loop of the event driven library, that is, before to sleep
  * for ready file descriptors. */
+
 void beforeSleep(struct aeEventLoop *eventLoop) {
     UNUSED(eventLoop);
 
@@ -1388,8 +1389,8 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
 
     /* Run a fast expire cycle (the called function will return
      * ASAP if a fast cycle is not needed). */
-    if (server.active_expire_enabled && server.masterhost == NULL)
-        activeExpireCycle(ACTIVE_EXPIRE_CYCLE_FAST);
+    if (server.active_expire_enabled && server.masterhost == NULL) // 开启定期删除 并且是master
+        activeExpireCycle(ACTIVE_EXPIRE_CYCLE_FAST); // 快速过期删除
 
     /* Send all the slaves an ACK request if at least one client blocked
      * during the previous event loop iteration. */
@@ -1440,7 +1441,9 @@ void afterSleep(struct aeEventLoop *eventLoop) {
 }
 
 /* =========================== Server initialization ======================== */
-
+/**
+ * 创建全局共享对象
+ */
 void createSharedObjects(void) {
     int j;
 
@@ -1517,7 +1520,7 @@ void createSharedObjects(void) {
     shared.rpoplpush = createStringObject("RPOPLPUSH",9);
     shared.zpopmin = createStringObject("ZPOPMIN",7);
     shared.zpopmax = createStringObject("ZPOPMAX",7);
-    for (j = 0; j < OBJ_SHARED_INTEGERS; j++) {
+    for (j = 0; j < OBJ_SHARED_INTEGERS; j++) { // 创建9999个整数做共享对象
         shared.integers[j] =
             makeObjectShared(createObject(OBJ_STRING,(void*)(long)j));
         shared.integers[j]->encoding = OBJ_ENCODING_INT;
@@ -1713,7 +1716,7 @@ void initServerConfig(void) {
      * redis.conf using the rename-command directive. */
     server.commands = dictCreate(&commandTableDictType,NULL);
     server.orig_commands = dictCreate(&commandTableDictType,NULL);
-    populateCommandTable();
+    populateCommandTable(); // 初始化redisCommand
     server.delCommand = lookupCommandByCString("del");
     server.multiCommand = lookupCommandByCString("multi");
     server.lpushCommand = lookupCommandByCString("lpush");
@@ -1933,23 +1936,30 @@ void checkTcpBacklogSettings(void) {
  * impossible to bind, or no bind addresses were specified in the server
  * configuration but the function is not able to bind * for at least
  * one of the IPv4 or IPv6 protocols. */
-int listenToPort(int port, int *fds, int *count) { // 创建socket,启动监听,支持ipv4和ipv6
+/**
+ * 创建socket,启动监听,支持ipv4和ipv6
+ * @param port 端口 默认:6379
+ * @param fds 文件描述符 socket
+ * @param count 文件描述符个数
+ * @return
+ */
+int listenToPort(int port, int *fds, int *count) {
     int j;
 
     /* Force binding of 0.0.0.0 if no bind address is specified, always
      * entering the loop if j == 0. */
-    if (server.bindaddr_count == 0) server.bindaddr[0] = NULL;
+    if (server.bindaddr_count == 0) server.bindaddr[0] = NULL; // 没有绑定访问地址,bindaddr地址为空 就是0.0.0.0 标识所有id都能访问
     for (j = 0; j < server.bindaddr_count || j == 0; j++) {
-        if (server.bindaddr[j] == NULL) {
+        if (server.bindaddr[j] == NULL) { // 0.0.0.0
             int unsupported = 0;
             /* Bind * for both IPv6 and IPv4, we enter here only if
              * server.bindaddr_count == 0. */
             fds[*count] = anetTcp6Server(server.neterr,port,NULL,
-                server.tcp_backlog);
-            if (fds[*count] != ANET_ERR) {
-                anetNonBlock(NULL,fds[*count]);
+                server.tcp_backlog); // 初始化ipv6 遍地地址为null server.tcp_backlog:accept queue长度 默认511
+            if (fds[*count] != ANET_ERR) { // 初始化成功
+                anetNonBlock(NULL,fds[*count]); // 将文件描述符设为非阻塞
                 (*count)++;
-            } else if (errno == EAFNOSUPPORT) {
+            } else if (errno == EAFNOSUPPORT) { // 不支持协议
                 unsupported++;
                 serverLog(LL_WARNING,"Not listening to IPv6: unsupproted");
             }
@@ -1957,9 +1967,9 @@ int listenToPort(int port, int *fds, int *count) { // 创建socket,启动监听,
             if (*count == 1 || unsupported) {
                 /* Bind the IPv4 address as well. */
                 fds[*count] = anetTcpServer(server.neterr,port,NULL,
-                    server.tcp_backlog);
-                if (fds[*count] != ANET_ERR) {
-                    anetNonBlock(NULL,fds[*count]);
+                    server.tcp_backlog); // 初始化ipv4 绑定地址为空
+                if (fds[*count] != ANET_ERR) { // 初始化成功
+                    anetNonBlock(NULL,fds[*count]); // 将文件描述符设为非阻塞
                     (*count)++;
                 } else if (errno == EAFNOSUPPORT) {
                     unsupported++;
@@ -1970,14 +1980,14 @@ int listenToPort(int port, int *fds, int *count) { // 创建socket,启动监听,
              * otherwise fds[*count] will be ANET_ERR and we'll print an
              * error and return to the caller with an error. */
             if (*count + unsupported == 2) break;
-        } else if (strchr(server.bindaddr[j],':')) {
+        } else if (strchr(server.bindaddr[j],':')) { // 有绑定地址 是ipv6
             /* Bind IPv6 address. */
             fds[*count] = anetTcp6Server(server.neterr,port,server.bindaddr[j],
-                server.tcp_backlog);
-        } else {
+                server.tcp_backlog); // 根据绑定地址初始化ipv6
+        } else { // 有绑定地址 是ipv6
             /* Bind IPv4 address. */
             fds[*count] = anetTcpServer(server.neterr,port,server.bindaddr[j],
-                server.tcp_backlog);
+                server.tcp_backlog); // 根据绑定地址初始化ipv4
         }
         if (fds[*count] == ANET_ERR) {
             serverLog(LL_WARNING,
@@ -1990,7 +2000,7 @@ int listenToPort(int port, int *fds, int *count) { // 创建socket,启动监听,
                     continue;
             return C_ERR;
         }
-        anetNonBlock(NULL,fds[*count]);
+        anetNonBlock(NULL,fds[*count]); // 将文件描述符设为非阻塞
         (*count)++;
     }
     return C_OK;
@@ -2076,11 +2086,11 @@ void initServer(void) {
 
     /* Open the TCP listening socket for the user commands. */
     if (server.port != 0 &&
-        listenToPort(server.port,server.ipfd,&server.ipfd_count) == C_ERR)
+        listenToPort(server.port,server.ipfd,&server.ipfd_count) == C_ERR) // 监听普通的tcp链接
         exit(1);
 
     /* Open the listening Unix domain socket. */
-    if (server.unixsocket != NULL) { // 打开监听端口
+    if (server.unixsocket != NULL) { // 打开监听端口 unix套接字
         unlink(server.unixsocket); /* don't care if this fails */
         server.sofd = anetUnixServer(server.neterr,server.unixsocket,
             server.unixsocketperm, server.tcp_backlog);
@@ -2098,7 +2108,8 @@ void initServer(void) {
     }
 
     /* Create the Redis databases, and initialize other internal state. */
-    for (j = 0; j < server.dbnum; j++) { // 创建redis数据库
+    for (j = 0; j < server.dbnum; j++) { // 依次创建16个redis数据库并初始化
+        // 创建键空间
         server.db[j].dict = dictCreate(&dbDictType,NULL);
         server.db[j].expires = dictCreate(&keyptrDictType,NULL);
         server.db[j].blocking_keys = dictCreate(&keylistDictType,NULL);
@@ -2215,6 +2226,9 @@ void InitServerLast() {
 
 /* Populates the Redis Command Table starting from the hard coded list
  * we have on top of redis.c file. */
+/**
+ * 初始化redisCommandTable
+ */
 void populateCommandTable(void) {
     int j;
     int numcommands = sizeof(redisCommandTable)/sizeof(struct redisCommand);
@@ -2305,7 +2319,11 @@ void redisOpArrayFree(redisOpArray *oa) {
 }
 
 /* ====================== Commands lookup and execution ===================== */
-
+/**
+ * 根据key名称查找value
+ * @param name
+ * @return
+ */
 struct redisCommand *lookupCommand(sds name) {
     return dictFetchValue(server.commands, name);
 }
@@ -2600,7 +2618,7 @@ int processCommand(client *c) {
 
     /* Now lookup the command and check ASAP about trivial error conditions
      * such as wrong arity, bad command name and so forth. */
-    c->cmd = c->lastcmd = lookupCommand(c->argv[0]->ptr); // 查找命令是否存在
+    c->cmd = c->lastcmd = lookupCommand(c->argv[0]->ptr); // 在命令字典里查找命令是否存在 并赋值到client的 当前执行命令和最后执行命令
     if (!c->cmd) {
         flagTransaction(c);
         sds args = sdsempty();
@@ -2660,7 +2678,7 @@ int processCommand(client *c) {
      * condition, to avoid mixing the propagation of scripts with the
      * propagation of DELs due to eviction. */
     if (server.maxmemory && !server.lua_timedout) { // 最大内存校验
-        int out_of_memory = freeMemoryIfNeededAndSafe() == C_ERR;
+        int out_of_memory = freeMemoryIfNeededAndSafe() == C_ERR; // 缓存淘汰
         /* freeMemoryIfNeeded may flush slave output buffers. This may result
          * into a slave, that may be the active client, to be freed. */
         if (server.current_client == NULL) return C_ERR;

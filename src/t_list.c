@@ -40,13 +40,19 @@
  *
  * There is no need for the caller to increment the refcount of 'value' as
  * the function takes care of it if needed. */
+/**
+ * 把value添加到list中
+ * @param subject
+ * @param value
+ * @param where
+ */
 void listTypePush(robj *subject, robj *value, int where) {
-    if (subject->encoding == OBJ_ENCODING_QUICKLIST) {
-        int pos = (where == LIST_HEAD) ? QUICKLIST_HEAD : QUICKLIST_TAIL;
-        value = getDecodedObject(value);
+    if (subject->encoding == OBJ_ENCODING_QUICKLIST) { // encoding是quicklist
+        int pos = (where == LIST_HEAD) ? QUICKLIST_HEAD : QUICKLIST_TAIL; // 根据where确定是head还是tail
+        value = getDecodedObject(value); // 解码value
         size_t len = sdslen(value->ptr);
-        quicklistPush(subject->ptr, value->ptr, len, pos);
-        decrRefCount(value);
+        quicklistPush(subject->ptr, value->ptr, len, pos); // 调用quicklistPush将value添加到list中
+        decrRefCount(value); // 减少引用计数
     } else {
         serverPanic("Unknown list encoding");
     }
@@ -60,12 +66,12 @@ robj *listTypePop(robj *subject, int where) {
     long long vlong;
     robj *value = NULL;
 
-    int ql_where = where == LIST_HEAD ? QUICKLIST_HEAD : QUICKLIST_TAIL;
-    if (subject->encoding == OBJ_ENCODING_QUICKLIST) {
+    int ql_where = where == LIST_HEAD ? QUICKLIST_HEAD : QUICKLIST_TAIL; // ql_where = 0 或 -1
+    if (subject->encoding == OBJ_ENCODING_QUICKLIST) { // 编码是quicklist
         if (quicklistPopCustom(subject->ptr, ql_where, (unsigned char **)&value,
-                               NULL, &vlong, listPopSaver)) {
-            if (!value)
-                value = createStringObjectFromLongLong(vlong);
+                               NULL, &vlong, listPopSaver)) { // 从list中弹出value
+            if (!value) // value不是空
+                value = createStringObjectFromLongLong(vlong); // 创建字符串对象 值是value
         }
     } else {
         serverPanic("Unknown list encoding");
@@ -195,7 +201,11 @@ void listTypeConvert(robj *subject, int enc) {
 /*-----------------------------------------------------------------------------
  * List Commands
  *----------------------------------------------------------------------------*/
-
+/**
+ * 内部函数
+ * @param c
+ * @param where head或tail
+ */
 void pushGenericCommand(client *c, int where) {
     int j, pushed = 0;
 
@@ -206,33 +216,37 @@ void pushGenericCommand(client *c, int where) {
         }
     }
 
-    robj *lobj = lookupKeyWrite(c->db,c->argv[1]);
+    robj *lobj = lookupKeyWrite(c->db,c->argv[1]); // 在db中查找key对应的lobj
 
-    if (lobj && lobj->type != OBJ_LIST) {
-        addReply(c,shared.wrongtypeerr);
+    if (lobj && lobj->type != OBJ_LIST) { // 找到了 并且类别不是list
+        addReply(c,shared.wrongtypeerr); // 应答类别错误
         return;
     }
 
-    for (j = 2; j < c->argc; j++) {
-        if (!lobj) {
-            lobj = createQuicklistObject();
+    for (j = 2; j < c->argc; j++) { // 循环 val1 val2 ...
+        if (!lobj) { // 没找到
+            lobj = createQuicklistObject(); // 创建list
             quicklistSetOptions(lobj->ptr, server.list_max_ziplist_size,
                                 server.list_compress_depth);
-            dbAdd(c->db,c->argv[1],lobj);
+            dbAdd(c->db,c->argv[1],lobj); // 添加到db中
         }
-        listTypePush(lobj,c->argv[j],where);
-        pushed++;
+        listTypePush(lobj,c->argv[j],where); // 将value推入list中
+        pushed++; // pushed计数加1
     }
-    addReplyLongLong(c, (lobj ? listTypeLength(lobj) : 0));
-    if (pushed) {
-        char *event = (where == LIST_HEAD) ? "lpush" : "rpush";
+    addReplyLongLong(c, (lobj ? listTypeLength(lobj) : 0)); // 应答数量
+    if (pushed) { // 推入成功
+        char *event = (where == LIST_HEAD) ? "lpush" : "rpush"; // where是head 则时间是lpush否则是rpush
 
-        signalModifiedKey(c->db,c->argv[1]);
-        notifyKeyspaceEvent(NOTIFY_LIST,event,c->argv[1],c->db->id);
+        signalModifiedKey(c->db,c->argv[1]); // 键修改
+        notifyKeyspaceEvent(NOTIFY_LIST,event,c->argv[1],c->db->id); // 发送键空间通知
     }
-    server.dirty += pushed;
+    server.dirty += pushed; // 服务器修改的记录 等于pushed累加
 }
-
+/**
+ * 外部函数
+ * lpush key val1 val2 ...
+ * @param c
+ */
 void lpushCommand(client *c) {
     pushGenericCommand(c,LIST_HEAD);
 }
@@ -383,30 +397,37 @@ void lsetCommand(client *c) {
         serverPanic("Unknown list encoding");
     }
 }
-
+/**
+ * list 弹出
+ * @param c
+ * @param where head或tail
+ */
 void popGenericCommand(client *c, int where) {
-    robj *o = lookupKeyWriteOrReply(c,c->argv[1],shared.nullbulk);
-    if (o == NULL || checkType(c,o,OBJ_LIST)) return;
+    robj *o = lookupKeyWriteOrReply(c,c->argv[1],shared.nullbulk); // 根据key找对应的redisObj,没找到应答null
+    if (o == NULL || checkType(c,o,OBJ_LIST)) return; // 是空或者obj的类型不是list 则返回
 
-    robj *value = listTypePop(o,where);
+    robj *value = listTypePop(o,where); // 从list中弹出value
     if (value == NULL) {
         addReply(c,shared.nullbulk);
-    } else {
-        char *event = (where == LIST_HEAD) ? "lpop" : "rpop";
+    } else { // value不是空
+        char *event = (where == LIST_HEAD) ? "lpop" : "rpop"; // 事件如果是head则是lpop否则是rpop
 
-        addReplyBulk(c,value);
-        decrRefCount(value);
-        notifyKeyspaceEvent(NOTIFY_LIST,event,c->argv[1],c->db->id);
-        if (listTypeLength(o) == 0) {
+        addReplyBulk(c,value); // 应答值
+        decrRefCount(value); // 值的引用计数减1
+        notifyKeyspaceEvent(NOTIFY_LIST,event,c->argv[1],c->db->id); // 发送键空间通知
+        if (listTypeLength(o) == 0) { // list的长度是0
             notifyKeyspaceEvent(NOTIFY_GENERIC,"del",
                                 c->argv[1],c->db->id);
-            dbDelete(c->db,c->argv[1]);
+            dbDelete(c->db,c->argv[1]); // 删除list对应的key
         }
         signalModifiedKey(c->db,c->argv[1]);
         server.dirty++;
     }
 }
-
+/**
+ * lpop key
+ * @param c
+ */
 void lpopCommand(client *c) {
     popGenericCommand(c,LIST_HEAD);
 }

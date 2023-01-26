@@ -39,50 +39,61 @@ void sunionDiffGenericCommand(client *c, robj **setkeys, int setnum,
 /* Factory method to return a set that *can* hold "value". When the object has
  * an integer-encodable value, an intset will be returned. Otherwise a regular
  * hash table. */
+/**
+ * 创建新的set
+ * @param value member
+ * @return
+ */
 robj *setTypeCreate(sds value) {
-    if (isSdsRepresentableAsLongLong(value,NULL) == C_OK)
-        return createIntsetObject();
-    return createSetObject();
+    if (isSdsRepresentableAsLongLong(value,NULL) == C_OK) // 如果能够把value转化为整数
+        return createIntsetObject(); // 创建一个新的intset
+    return createSetObject(); // 不能转整数则创建一个新的ht
 }
 
 /* Add the specified value into a set.
  *
  * If the value was already member of the set, nothing is done and 0 is
  * returned, otherwise the new element is added and 1 is returned. */
+/**
+ * 添加到set
+ * @param subject 要添加到的set
+ * @param value member
+ * @return
+ */
 int setTypeAdd(robj *subject, sds value) {
     long long llval;
-    if (subject->encoding == OBJ_ENCODING_HT) {
+    if (subject->encoding == OBJ_ENCODING_HT) { // set底层是ht
         dict *ht = subject->ptr;
-        dictEntry *de = dictAddRaw(ht,value,NULL);
-        if (de) {
-            dictSetKey(ht,de,sdsdup(value));
-            dictSetVal(ht,de,NULL);
+        dictEntry *de = dictAddRaw(ht,value,NULL); // 以value为key,在ht中添加节点
+        if (de) { // 添加节点
+            dictSetKey(ht,de,sdsdup(value)); // 节点设置key 复制值作为key
+            dictSetVal(ht,de,NULL); // 节点value设空
             return 1;
         }
-    } else if (subject->encoding == OBJ_ENCODING_INTSET) {
-        if (isSdsRepresentableAsLongLong(value,&llval) == C_OK) {
+    } else if (subject->encoding == OBJ_ENCODING_INTSET) { // set底层是intset
+        if (isSdsRepresentableAsLongLong(value,&llval) == C_OK) { // 如果能够将value转为正数
             uint8_t success = 0;
-            subject->ptr = intsetAdd(subject->ptr,llval,&success);
+            subject->ptr = intsetAdd(subject->ptr,llval,&success); // 添加到intset
             if (success) {
                 /* Convert to regular set when the intset contains
                  * too many entries. */
                 size_t max_entries = server.set_max_intset_entries;
                 /* limit to 1G entries due to intset internals. */
                 if (max_entries >= 1<<30) max_entries = 1<<30;
-                if (intsetLen(subject->ptr) > max_entries)
-                    setTypeConvert(subject,OBJ_ENCODING_HT);
+                if (intsetLen(subject->ptr) > max_entries) // 长度大于阈值(512)
+                    setTypeConvert(subject,OBJ_ENCODING_HT); // 将setObj的编码转为ht
                 return 1;
             }
-        } else {
+        } else { // value是字符串
             /* Failed to get integer from object, convert to regular set. */
-            setTypeConvert(subject,OBJ_ENCODING_HT);
+            setTypeConvert(subject,OBJ_ENCODING_HT); // 将setObj的编码转为ht(创建新的dict并添加数据)
 
             /* The set *was* an intset and this value is not integer
              * encodable, so dictAdd should always work. */
-            serverAssert(dictAdd(subject->ptr,sdsdup(value),NULL) == DICT_OK);
+            serverAssert(dictAdd(subject->ptr,sdsdup(value),NULL) == DICT_OK); // 将value添加到新的dict中 key:value拷贝 value:NULL
             return 1;
         }
-    } else {
+    } else { // 报错
         serverPanic("Unknown set encoding");
     }
     return 0;
@@ -208,13 +219,20 @@ sds setTypeNextObject(setTypeIterator *si) {
  * Note that both the sdsele and llele pointers should be passed and cannot
  * be NULL since the function will try to defensively populate the non
  * used field with values which are easy to trap if misused. */
+/**
+ * 随机返回一个值
+ * @param setobj 要找的set
+ * @param sdsele 返回sds
+ * @param llele 返回ll
+ * @return
+ */
 int setTypeRandomElement(robj *setobj, sds *sdsele, int64_t *llele) {
-    if (setobj->encoding == OBJ_ENCODING_HT) {
-        dictEntry *de = dictGetRandomKey(setobj->ptr);
-        *sdsele = dictGetKey(de);
+    if (setobj->encoding == OBJ_ENCODING_HT) { // 是ht
+        dictEntry *de = dictGetRandomKey(setobj->ptr); // 在dict中随机返回一个节点
+        *sdsele = dictGetKey(de); // 获得节点的值
         *llele = -123456789; /* Not needed. Defensive. */
-    } else if (setobj->encoding == OBJ_ENCODING_INTSET) {
-        *llele = intsetRandom(setobj->ptr);
+    } else if (setobj->encoding == OBJ_ENCODING_INTSET) { // 是intset
+        *llele = intsetRandom(setobj->ptr); // 在intset中随机返回一个值
         *sdsele = NULL; /* Not needed. Defensive. */
     } else {
         serverPanic("Unknown set encoding");
@@ -263,31 +281,34 @@ void setTypeConvert(robj *setobj, int enc) {
         serverPanic("Unsupported set conversion");
     }
 }
-
+/**
+ * setadd key mem1 mem2 ...
+ * @param c
+ */
 void saddCommand(client *c) {
     robj *set;
-    int j, added = 0;
+    int j, added = 0; // 添加计数
 
-    set = lookupKeyWrite(c->db,c->argv[1]);
-    if (set == NULL) {
-        set = setTypeCreate(c->argv[2]->ptr);
-        dbAdd(c->db,c->argv[1],set);
-    } else {
-        if (set->type != OBJ_SET) {
-            addReply(c,shared.wrongtypeerr);
+    set = lookupKeyWrite(c->db,c->argv[1]); // 根据key查找setObj
+    if (set == NULL) { // 没找到
+        set = setTypeCreate(c->argv[2]->ptr); // 创建新的set(intset或ht)
+        dbAdd(c->db,c->argv[1],set); // 添加到db中
+    } else { // 找到了
+        if (set->type != OBJ_SET) { // 类别不是set
+            addReply(c,shared.wrongtypeerr); // 应答错误类型
             return;
         }
     }
 
-    for (j = 2; j < c->argc; j++) {
-        if (setTypeAdd(set,c->argv[j]->ptr)) added++;
+    for (j = 2; j < c->argc; j++) { // 循环参数 mem1 mem2 ...
+        if (setTypeAdd(set,c->argv[j]->ptr)) added++; // 依次添加 添加成功则计数+1
     }
-    if (added) {
-        signalModifiedKey(c->db,c->argv[1]);
-        notifyKeyspaceEvent(NOTIFY_SET,"sadd",c->argv[1],c->db->id);
+    if (added) { // 添加成功了
+        signalModifiedKey(c->db,c->argv[1]); // 键修改
+        notifyKeyspaceEvent(NOTIFY_SET,"sadd",c->argv[1],c->db->id); // 键空间通知 sadd
     }
-    server.dirty += added;
-    addReplyLongLong(c,added);
+    server.dirty += added; // 服务器的数据修改数量 累加 add
+    addReplyLongLong(c,added); // 应答修改数量
 }
 
 void sremCommand(client *c) {
@@ -552,52 +573,55 @@ void spopWithCountCommand(client *c) {
     signalModifiedKey(c->db,c->argv[1]);
     server.dirty++;
 }
-
+/**
+ * spop key [count]
+ * @param c
+ */
 void spopCommand(client *c) {
     robj *set, *ele, *aux;
     sds sdsele;
     int64_t llele;
     int encoding;
 
-    if (c->argc == 3) {
-        spopWithCountCommand(c);
+    if (c->argc == 3) { // 参数个数==3
+        spopWithCountCommand(c); // 调用另一个command
         return;
-    } else if (c->argc > 3) {
-        addReply(c,shared.syntaxerr);
+    } else if (c->argc > 3) { // 参数个数3
+        addReply(c,shared.syntaxerr); // 返回语法错误
         return;
     }
 
     /* Make sure a key with the name inputted exists, and that it's type is
      * indeed a set */
-    if ((set = lookupKeyWriteOrReply(c,c->argv[1],shared.nullbulk)) == NULL ||
-        checkType(c,set,OBJ_SET)) return;
+    if ((set = lookupKeyWriteOrReply(c,c->argv[1],shared.nullbulk)) == NULL || // 从db中找key对应的setObj 如果找不到则返回空 或者
+        checkType(c,set,OBJ_SET)) return;  // 找到了类型不是set 则返回
 
     /* Get a random element from the set */
-    encoding = setTypeRandomElement(set,&sdsele,&llele);
+    encoding = setTypeRandomElement(set,&sdsele,&llele); // 随机返回一个值 字符换或整数
 
     /* Remove the element from the set */
-    if (encoding == OBJ_ENCODING_INTSET) {
-        ele = createStringObjectFromLongLong(llele);
-        set->ptr = intsetRemove(set->ptr,llele,NULL);
-    } else {
-        ele = createStringObject(sdsele,sdslen(sdsele));
-        setTypeRemove(set,ele->ptr);
+    if (encoding == OBJ_ENCODING_INTSET) { // 如果是intset
+        ele = createStringObjectFromLongLong(llele); // 把值封装成redisObj
+        set->ptr = intsetRemove(set->ptr,llele,NULL); // 在intset中删除值
+    } else { // 是ht
+        ele = createStringObject(sdsele,sdslen(sdsele)); // 把sds封装成redisObj
+        setTypeRemove(set,ele->ptr); // 从set中删除sds
     }
 
-    notifyKeyspaceEvent(NOTIFY_SET,"spop",c->argv[1],c->db->id);
+    notifyKeyspaceEvent(NOTIFY_SET,"spop",c->argv[1],c->db->id); // 发送键空间通知
 
     /* Replicate/AOF this command as an SREM operation */
-    aux = createStringObject("SREM",4);
+    aux = createStringObject("SREM",4); // 传播命令到aof和slave
     rewriteClientCommandVector(c,3,aux,c->argv[1],ele);
     decrRefCount(aux);
 
     /* Add the element to the reply */
-    addReplyBulk(c,ele);
-    decrRefCount(ele);
+    addReplyBulk(c,ele); // 应答redisObj
+    decrRefCount(ele); // 引用计算减1
 
     /* Delete the set if it's empty */
-    if (setTypeSize(set) == 0) {
-        dbDelete(c->db,c->argv[1]);
+    if (setTypeSize(set) == 0) { // set的size是0 没有元素
+        dbDelete(c->db,c->argv[1]); // 从db中删除set
         notifyKeyspaceEvent(NOTIFY_GENERIC,"del",c->argv[1],c->db->id);
     }
 

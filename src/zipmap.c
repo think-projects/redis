@@ -143,8 +143,8 @@ static unsigned char *zipmapLookupRaw(unsigned char *zm, unsigned char *key, uns
         unsigned char free;
 
         /* Match or skip the key */
-        l = zipmapDecodeLength(p);
-        llen = zipmapEncodeLength(NULL,l);
+        l = zipmapDecodeLength(p); // 解码
+        llen = zipmapEncodeLength(NULL,l); // 获得len
         if (key != NULL && k == NULL && l == klen && !memcmp(p+llen,key,l)) {
             /* Only return when the user doesn't care
              * for the total length of the zipmap. */
@@ -200,7 +200,7 @@ static unsigned int zipmapRawEntryLength(unsigned char *p) {
 }
 
 static inline unsigned char *zipmapResize(unsigned char *zm, unsigned int len) {
-    zm = zrealloc(zm, len);
+    zm = zrealloc(zm, len); // 申请内存,长度为len
     zm[len-1] = ZIPMAP_END;
     return zm;
 }
@@ -208,34 +208,44 @@ static inline unsigned char *zipmapResize(unsigned char *zm, unsigned int len) {
 /* Set key to value, creating the key if it does not already exist.
  * If 'update' is not NULL, *update is set to 1 if the key was
  * already preset, otherwise to 0. */
+/**
+ * 设置键值对
+ * @param zm 要插入的zipmap
+ * @param key 插入的键
+ * @param klen 键的长度
+ * @param val 插入的值
+ * @param vlen 值的长度
+ * @param update 更新标志 1:update
+ * @return
+ */
 unsigned char *zipmapSet(unsigned char *zm, unsigned char *key, unsigned int klen, unsigned char *val, unsigned int vlen, int *update) {
     unsigned int zmlen, offset;
-    unsigned int freelen, reqlen = zipmapRequiredLength(klen,vlen);
-    unsigned int empty, vempty;
+    unsigned int freelen, reqlen = zipmapRequiredLength(klen,vlen); // 计算需要的长度 freelen:value后的空闲长度 reqlen:插入键值对需要的长度
+    unsigned int empty, vempty; // empty:差
     unsigned char *p;
 
     freelen = reqlen;
     if (update) *update = 0;
-    p = zipmapLookupRaw(zm,key,klen,&zmlen);
-    if (p == NULL) {
+    p = zipmapLookupRaw(zm,key,klen,&zmlen); // 查找key在zipmap中的位置
+    if (p == NULL) { // 没有找到 zipmap中没有key
         /* Key not found: enlarge */
-        zm = zipmapResize(zm, zmlen+reqlen);
+        zm = zipmapResize(zm, zmlen+reqlen); // 申请内存
         p = zm+zmlen-1;
         zmlen = zmlen+reqlen;
 
         /* Increase zipmap length (this is an insert) */
         if (zm[0] < ZIPMAP_BIGLEN) zm[0]++;
-    } else {
+    } else { // 找到了,key存在于zipmap中
         /* Key found. Is there enough space for the new value? */
         /* Compute the total length: */
-        if (update) *update = 1;
-        freelen = zipmapRawEntryLength(p);
-        if (freelen < reqlen) {
+        if (update) *update = 1; // 更新value
+        freelen = zipmapRawEntryLength(p); // 计算原始kv的freelen
+        if (freelen < reqlen) { // 不够
             /* Store the offset of this key within the current zipmap, so
              * it can be resized. Then, move the tail backwards so this
              * pair fits at the current position. */
             offset = p-zm;
-            zm = zipmapResize(zm, zmlen-freelen+reqlen);
+            zm = zipmapResize(zm, zmlen-freelen+reqlen); // 重新申请内存
             p = zm+offset;
 
             /* The +1 in the number of bytes to be moved is caused by the
@@ -250,20 +260,20 @@ unsigned char *zipmapSet(unsigned char *zm, unsigned char *key, unsigned int kle
      * be written. If there is too much free space, move the tail
      * of the zipmap a few bytes to the front and shrink the zipmap,
      * as we want zipmaps to be very space efficient. */
-    empty = freelen-reqlen;
-    if (empty >= ZIPMAP_VALUE_MAX_FREE) {
+    empty = freelen-reqlen; // freelen大于reqlen
+    if (empty >= ZIPMAP_VALUE_MAX_FREE) { // 差大于等于4
         /* First, move the tail <empty> bytes to the front, then resize
          * the zipmap to be <empty> bytes smaller. */
         offset = p-zm;
         memmove(p+reqlen, p+freelen, zmlen-(offset+freelen+1));
         zmlen -= empty;
-        zm = zipmapResize(zm, zmlen);
+        zm = zipmapResize(zm, zmlen); // 缩小内存
         p = zm+offset;
         vempty = 0;
-    } else {
+    } else { // 把差记录变量 vempty-->free
         vempty = empty;
     }
-
+    // 写入key和value
     /* Just write the key + value and we are done. */
     /* Key: */
     p += zipmapEncodeLength(p,klen);

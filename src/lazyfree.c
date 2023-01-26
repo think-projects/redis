@@ -74,19 +74,22 @@ size_t lazyfreeGetFreeEffort(robj *obj) {
  * If there are enough allocations to free the value object may be put into
  * a lazy free list instead of being freed synchronously. The lazy free list
  * will be reclaimed in a different bio.c thread. */
+/**
+ * 异步删除
+ */
 #define LAZYFREE_THRESHOLD 64
 int dbAsyncDelete(redisDb *db, robj *key) {
     /* Deleting an entry from the expires dict will not free the sds of
      * the key, because it is shared with the main dictionary. */
-    if (dictSize(db->expires) > 0) dictDelete(db->expires,key->ptr);
+    if (dictSize(db->expires) > 0) dictDelete(db->expires,key->ptr); // 如果过期字典有数据,则删除过期字典中的key
 
     /* If the value is composed of a few allocations, to free in a lazy way
      * is actually just slower... So under a certain limit we just free
      * the object synchronously. */
-    dictEntry *de = dictUnlink(db->dict,key->ptr);
-    if (de) {
-        robj *val = dictGetVal(de);
-        size_t free_effort = lazyfreeGetFreeEffort(val);
+    dictEntry *de = dictUnlink(db->dict,key->ptr); // unlink字典中的key
+    if (de) { // 字典里没有key
+        robj *val = dictGetVal(de); // 获得节点里的value
+        size_t free_effort = lazyfreeGetFreeEffort(val); // 估算value的空间
 
         /* If releasing the object is too much work, do it in the background
          * by adding the object to the lazy free list.
@@ -96,18 +99,20 @@ int dbAsyncDelete(redisDb *db, robj *key) {
          * objects, and then call dbDelete(). In this case we'll fall
          * through and reach the dictFreeUnlinkedEntry() call, that will be
          * equivalent to just calling decrRefCount(). */
+        // 空间大于(设定)阈值 并且 value没有其他引用
+        // 如果空间很小则不需要马上删除
         if (free_effort > LAZYFREE_THRESHOLD && val->refcount == 1) {
-            atomicIncr(lazyfree_objects,1);
-            bioCreateBackgroundJob(BIO_LAZY_FREE,val,NULL,NULL);
-            dictSetVal(db->dict,de,NULL);
+            atomicIncr(lazyfree_objects,1); // 添加懒删除列表
+            bioCreateBackgroundJob(BIO_LAZY_FREE,val,NULL,NULL); // 创建后台任务 删除value
+            dictSetVal(db->dict,de,NULL); // value赋值NULL
         }
     }
 
     /* Release the key-val pair, or just the key if we set the val
      * field to NULL in order to lazy free it later. */
     if (de) {
-        dictFreeUnlinkedEntry(db->dict,de);
-        if (server.cluster_enabled) slotToKeyDel(key);
+        dictFreeUnlinkedEntry(db->dict,de); // 释放key,value,entry
+        if (server.cluster_enabled) slotToKeyDel(key); // 如果是集群则删除slot与key的映射表中的key的记录
         return 1;
     } else {
         return 0;
@@ -129,11 +134,12 @@ void freeObjAsync(robj *o) {
  * create a new empty set of hash tables and scheduling the old ones for
  * lazy freeing. */
 void emptyDbAsync(redisDb *db) {
-    dict *oldht1 = db->dict, *oldht2 = db->expires;
+    dict *oldht1 = db->dict, *oldht2 = db->expires; // dict  expires
+    // 是清空数据 不是删除db 所以要创建一个空的dict和一个空的expires并赋值给当前db
     db->dict = dictCreate(&dbDictType,NULL);
     db->expires = dictCreate(&keyptrDictType,NULL);
-    atomicIncr(lazyfree_objects,dictSize(oldht1));
-    bioCreateBackgroundJob(BIO_LAZY_FREE,NULL,oldht1,oldht2);
+    atomicIncr(lazyfree_objects,dictSize(oldht1)); // 添加到懒删除列表
+    bioCreateBackgroundJob(BIO_LAZY_FREE,NULL,oldht1,oldht2); // 创建后台job
 }
 
 /* Empty the slots-keys map of Redis CLuster by creating a new empty one

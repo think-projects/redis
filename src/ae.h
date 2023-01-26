@@ -62,47 +62,65 @@
 struct aeEventLoop;
 
 /* Types and data structures */
-typedef void aeFileProc(struct aeEventLoop *eventLoop, int fd, void *clientData, int mask);
+typedef void aeFileProc(struct aeEventLoop *eventLoop, int fd, void *clientData, int mask); // 回调函数 处理文件事件发生
 typedef int aeTimeProc(struct aeEventLoop *eventLoop, long long id, void *clientData);
 typedef void aeEventFinalizerProc(struct aeEventLoop *eventLoop, void *clientData);
 typedef void aeBeforeSleepProc(struct aeEventLoop *eventLoop);
 
 /* File event structure */
+/**
+ * 文件事件
+ */
 typedef struct aeFileEvent {
-    int mask; /* one of AE_(READABLE|WRITABLE|BARRIER) */
-    aeFileProc *rfileProc;
-    aeFileProc *wfileProc;
-    void *clientData;
+    /**
+     * READABLE 可读事件
+     * WRITABLE 可写事件
+     * BARRIER 先写后读 一般是先读后写：一个处理
+     */
+    int mask; /* one of AE_(READABLE|WRITABLE|BARRIER) */ // 文件事件类型
+    aeFileProc *rfileProc; // 指向读处理回调函数
+    aeFileProc *wfileProc; // 指向读处理回调函数
+    void *clientData; // 客户端数据
 } aeFileEvent;
 
 /* Time event structure */
+/**
+ * 时间事件
+ */
 typedef struct aeTimeEvent {
-    long long id; /* time event identifier. */
-    long when_sec; /* seconds */
-    long when_ms; /* milliseconds */
-    aeTimeProc *timeProc;
-    aeEventFinalizerProc *finalizerProc;
-    void *clientData;
-    struct aeTimeEvent *prev;
-    struct aeTimeEvent *next;
+    long long id; /* time event identifier. */ // 时间id 自增
+    long when_sec; /* seconds */ // 时间事件发生的秒
+    long when_ms; /* milliseconds */ // 时间事件发生的毫秒
+    aeTimeProc *timeProc; // 时间事件处理回调函数 serverCron
+    aeEventFinalizerProc *finalizerProc; // 时间事件删除时处理的回调函数
+    void *clientData; // 客户端数据
+    struct aeTimeEvent *prev; // 上一个时间事件
+    struct aeTimeEvent *next; // 下一个时间事件
 } aeTimeEvent;
 
 /* A fired event */
+/**
+ * 就绪文件事件
+ */
 typedef struct aeFiredEvent {
-    int fd;
-    int mask;
+    int fd; // 就绪的文件对应的fd(socket的fd)
+    int mask; // 就绪的文件类型 可读或可写
 } aeFiredEvent;
 
 /* State of an event based program */
+/**
+ * 时间循环结构
+ * 存储 文件事件 就绪事件 时间事件 IO多路复用对象 循环前后的处理函数
+ */
 typedef struct aeEventLoop {
-    int maxfd;   /* highest file descriptor currently registered */
-    int setsize; /* max number of file descriptors tracked */
-    long long timeEventNextId;
-    time_t lastTime;     /* Used to detect system clock skew */
-    aeFileEvent *events; /* Registered events */
-    aeFiredEvent *fired; /* Fired events */
-    aeTimeEvent *timeEventHead;
-    int stop;
+    int maxfd;   /* highest file descriptor currently registered */ // 当前注册的最大fd setsize-1
+    int setsize; /* max number of file descriptors tracked */ // 监听的fd的最大数量
+    long long timeEventNextId; // 下一个时间事件的id
+    time_t lastTime;     /* Used to detect system clock skew */ // 最后一次执行事件的时间
+    aeFileEvent *events; /* Registered events */ // 注册的文件事件 是setsize大小的数据 从0开始 到maxfd
+    aeFiredEvent *fired; /* Fired events */ // 就绪的文件事件 是setsize大小的数据
+    aeTimeEvent *timeEventHead; // 时间事件 指向双向链表的头
+    int stop; // 事件处理停止标识
     void *apidata; /* This is used for polling API specific data */
     aeBeforeSleepProc *beforesleep;
     aeBeforeSleepProc *aftersleep;

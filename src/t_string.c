@@ -63,80 +63,94 @@ static int checkStringLength(client *c, long long size) {
 #define OBJ_SET_XX (1<<1)     /* Set if key exists. */
 #define OBJ_SET_EX (1<<2)     /* Set if time in seconds is given */
 #define OBJ_SET_PX (1<<3)     /* Set if time in ms in given */
-
+/**
+ * 内部函数
+ * @param c client
+ * @param flags 标识
+ * @param key
+ * @param val
+ * @param expire 过期时间
+ * @param unit 单位 s ms
+ * @param ok_reply 应答成功
+ * @param abort_reply 应答失败
+ */
 void setGenericCommand(client *c, int flags, robj *key, robj *val, robj *expire, int unit, robj *ok_reply, robj *abort_reply) {
     long long milliseconds = 0; /* initialized to avoid any harmness warning */
 
-    if (expire) {
-        if (getLongLongFromObjectOrReply(c, expire, &milliseconds, NULL) != C_OK)
+    if (expire) { // 存在过期时间
+        if (getLongLongFromObjectOrReply(c, expire, &milliseconds, NULL) != C_OK) // 将expire转化为milliseconds
             return;
-        if (milliseconds <= 0) {
-            addReplyErrorFormat(c,"invalid expire time in %s",c->cmd->name);
+        if (milliseconds <= 0) { // 过期时间小于等于0
+            addReplyErrorFormat(c,"invalid expire time in %s",c->cmd->name); // 应答不合法过期时间
             return;
         }
-        if (unit == UNIT_SECONDS) milliseconds *= 1000;
+        if (unit == UNIT_SECONDS) milliseconds *= 1000; // 如果单位是秒 则 milliseconds *= 1000 转为毫秒
     }
 
-    if ((flags & OBJ_SET_NX && lookupKeyWrite(c->db,key) != NULL) ||
-        (flags & OBJ_SET_XX && lookupKeyWrite(c->db,key) == NULL))
+    if ((flags & OBJ_SET_NX && lookupKeyWrite(c->db,key) != NULL) || // flags是nx 并且key存在
+        (flags & OBJ_SET_XX && lookupKeyWrite(c->db,key) == NULL)) // flags是xx 并且key不存在
     {
-        addReply(c, abort_reply ? abort_reply : shared.nullbulk);
+        addReply(c, abort_reply ? abort_reply : shared.nullbulk); // 应答abort_reply
         return;
     }
-    setKey(c->db,key,val);
+    setKey(c->db,key,val); // 成功设置 添加或修改
     server.dirty++;
-    if (expire) setExpire(c,c->db,key,mstime()+milliseconds);
-    notifyKeyspaceEvent(NOTIFY_STRING,"set",key,c->db->id);
+    if (expire) setExpire(c,c->db,key,mstime()+milliseconds); // 如果有过期时间 设置key过期 mstime()+milliseconds
+    notifyKeyspaceEvent(NOTIFY_STRING,"set",key,c->db->id); // 键空间通知 set
     if (expire) notifyKeyspaceEvent(NOTIFY_GENERIC,
-        "expire",key,c->db->id);
-    addReply(c, ok_reply ? ok_reply : shared.ok);
+        "expire",key,c->db->id); // 如果有过期时间 则expire
+    addReply(c, ok_reply ? ok_reply : shared.ok); // 应答ok shared:共享对象
 }
 
 /* SET key value [NX] [XX] [EX <seconds>] [PX <milliseconds>] */
+/**
+ * 外层函数
+ * @param c client
+ */
 void setCommand(client *c) {
     int j;
-    robj *expire = NULL;
-    int unit = UNIT_SECONDS;
-    int flags = OBJ_SET_NO_FLAGS;
+    robj *expire = NULL; // 过期时间
+    int unit = UNIT_SECONDS; // 单位 默认 秒
+    int flags = OBJ_SET_NO_FLAGS; // 标识 默认0
 
-    for (j = 3; j < c->argc; j++) {
+    for (j = 3; j < c->argc; j++) { // 跳过 set key value
         char *a = c->argv[j]->ptr;
-        robj *next = (j == c->argc-1) ? NULL : c->argv[j+1];
+        robj *next = (j == c->argc-1) ? NULL : c->argv[j+1]; // 过期时间
 
         if ((a[0] == 'n' || a[0] == 'N') &&
             (a[1] == 'x' || a[1] == 'X') && a[2] == '\0' &&
-            !(flags & OBJ_SET_XX))
+            !(flags & OBJ_SET_XX)) // 如果是nx或NX 并且flag不是XX
         {
-            flags |= OBJ_SET_NX;
+            flags |= OBJ_SET_NX; // 标识为SET_NX
         } else if ((a[0] == 'x' || a[0] == 'X') &&
                    (a[1] == 'x' || a[1] == 'X') && a[2] == '\0' &&
-                   !(flags & OBJ_SET_NX))
+                   !(flags & OBJ_SET_NX)) // 如果是xx或XX 并且flag不是NX
         {
-            flags |= OBJ_SET_XX;
+            flags |= OBJ_SET_XX; // 标识为SET_XX
         } else if ((a[0] == 'e' || a[0] == 'E') &&
                    (a[1] == 'x' || a[1] == 'X') && a[2] == '\0' &&
-                   !(flags & OBJ_SET_PX) && next)
+                   !(flags & OBJ_SET_PX) && next) // 如果是ex或EX 并且flag不是PX 并且有过期时间
         {
-            flags |= OBJ_SET_EX;
-            unit = UNIT_SECONDS;
-            expire = next;
-            j++;
+            flags |= OBJ_SET_EX; // 标识为SET_NX
+            unit = UNIT_SECONDS; // 单位是秒
+            expire = next; // 设置过期时间
+            j++; // EX或PX只能存在一个
         } else if ((a[0] == 'p' || a[0] == 'P') &&
                    (a[1] == 'x' || a[1] == 'X') && a[2] == '\0' &&
-                   !(flags & OBJ_SET_EX) && next)
+                   !(flags & OBJ_SET_EX) && next) // 如果是px或PX 并且flag不是EX 并且有过期时间
         {
-            flags |= OBJ_SET_PX;
-            unit = UNIT_MILLISECONDS;
-            expire = next;
-            j++;
-        } else {
-            addReply(c,shared.syntaxerr);
+            flags |= OBJ_SET_PX; // 标识为SET_PX
+            unit = UNIT_MILLISECONDS; // 单位是毫秒
+            expire = next; // 设置过期时间
+            j++; // EX或PX只能存在一个
+        } else { // 语法错误
+            addReply(c,shared.syntaxerr); // 返回客户端应答
             return;
         }
     }
 
-    c->argv[2] = tryObjectEncoding(c->argv[2]);
-    setGenericCommand(c,flags,c->argv[1],c->argv[2],expire,unit,NULL,NULL);
+    c->argv[2] = tryObjectEncoding(c->argv[2]); // 尝试将value转为数字
+    setGenericCommand(c,flags,c->argv[1],c->argv[2],expire,unit,NULL,NULL); // 调用函数处理
 }
 
 void setnxCommand(client *c) {
@@ -153,22 +167,29 @@ void psetexCommand(client *c) {
     c->argv[3] = tryObjectEncoding(c->argv[3]);
     setGenericCommand(c,OBJ_SET_NO_FLAGS,c->argv[1],c->argv[3],c->argv[2],UNIT_MILLISECONDS,NULL,NULL);
 }
-
+/**
+ * 处理函数
+ * @param c
+ * @return
+ */
 int getGenericCommand(client *c) {
     robj *o;
 
-    if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.nullbulk)) == NULL)
+    if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.nullbulk)) == NULL) // 如果lookupKeyRead 如果obj时空 则应答NULL
         return C_OK;
 
-    if (o->type != OBJ_STRING) {
-        addReply(c,shared.wrongtypeerr);
+    if (o->type != OBJ_STRING) { // o不为空 类型不是string
+        addReply(c,shared.wrongtypeerr); // 应答类型错误
         return C_ERR;
     } else {
-        addReplyBulk(c,o);
+        addReplyBulk(c,o); // 块应答
         return C_OK;
     }
 }
-
+/**
+ * get key
+ * @param c
+ */
 void getCommand(client *c) {
     getGenericCommand(c);
 }
@@ -281,20 +302,23 @@ void getrangeCommand(client *c) {
         addReplyBulkCBuffer(c,(char*)str+start,end-start+1);
     }
 }
-
+/**
+ * mget key1 key2 ...
+ * @param c
+ */
 void mgetCommand(client *c) {
     int j;
 
-    addReplyMultiBulkLen(c,c->argc-1);
+    addReplyMultiBulkLen(c,c->argc-1); // 应答结果数
     for (j = 1; j < c->argc; j++) {
-        robj *o = lookupKeyRead(c->db,c->argv[j]);
-        if (o == NULL) {
-            addReply(c,shared.nullbulk);
+        robj *o = lookupKeyRead(c->db,c->argv[j]); // 以读的方式查找
+        if (o == NULL) { // 没找到
+            addReply(c,shared.nullbulk); // 应答空
         } else {
-            if (o->type != OBJ_STRING) {
-                addReply(c,shared.nullbulk);
+            if (o->type != OBJ_STRING) { // 类型不是string
+                addReply(c,shared.nullbulk); // 应答空
             } else {
-                addReplyBulk(c,o);
+                addReplyBulk(c,o); // 应答块
             }
         }
     }

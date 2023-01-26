@@ -264,7 +264,7 @@ static void _dictRehashStep(dict *d) {
 /* Add an element to the target hash table */
 int dictAdd(dict *d, void *key, void *val)
 {
-    dictEntry *entry = dictAddRaw(d,key,NULL);
+    dictEntry *entry = dictAddRaw(d,key,NULL); // 设置键
 
     if (!entry) return DICT_ERR;
     dictSetVal(d, entry, val); // 设置值
@@ -433,16 +433,21 @@ int dictDelete(dict *ht, const void *key) {
  * dictFreeUnlinkedEntry(entry); // <- This does not need to lookup again.
  */
 dictEntry *dictUnlink(dict *ht, const void *key) {
-    return dictGenericDelete(ht,key,1);
+    return dictGenericDelete(ht,key,1); // 只删除但不释放内存
 }
 
 /* You need to call this function to really free the entry after a call
  * to dictUnlink(). It's safe to call this function with 'he' = NULL. */
+/**
+ * 释放内存
+ * @param d
+ * @param he
+ */
 void dictFreeUnlinkedEntry(dict *d, dictEntry *he) {
     if (he == NULL) return;
-    dictFreeKey(d, he);
-    dictFreeVal(d, he);
-    zfree(he);
+    dictFreeKey(d, he); // 释放key
+    dictFreeVal(d, he); // 释放value
+    zfree(he); // 释放节点
 }
 
 /* Destroy an entire dictionary */
@@ -614,6 +619,11 @@ void dictReleaseIterator(dictIterator *iter)
 
 /* Return a random entry from the hash table. Useful to
  * implement randomized algorithms */
+/**
+ * 获得随机节点
+ * @param d
+ * @return
+ */
 dictEntry *dictGetRandomKey(dict *d)
 {
     dictEntry *he, *orighe;

@@ -41,15 +41,15 @@ void hashTypeTryConversion(robj *o, robj **argv, int start, int end) {
     int i;
     size_t sum = 0;
 
-    if (o->encoding != OBJ_ENCODING_ZIPLIST) return;
+    if (o->encoding != OBJ_ENCODING_ZIPLIST) return; // 编码不是ziplist则返回
 
     for (i = start; i <= end; i++) {
         if (!sdsEncodedObject(argv[i]))
             continue;
         size_t len = sdslen(argv[i]->ptr);
-        if (len > server.hash_max_ziplist_value) {
-            hashTypeConvert(o, OBJ_ENCODING_HT);
-            return;
+        if (len > server.hash_max_ziplist_value) { // 参数是sds并且长度大于64
+            hashTypeConvert(o, OBJ_ENCODING_HT); // 转化ht
+            return; // 只转化一次就退出循环
         }
         sum += len;
     }
@@ -70,12 +70,12 @@ int hashTypeGetFromZiplist(robj *o, sds field,
     serverAssert(o->encoding == OBJ_ENCODING_ZIPLIST);
 
     zl = o->ptr;
-    fptr = ziplistIndex(zl, ZIPLIST_HEAD);
+    fptr = ziplistIndex(zl, ZIPLIST_HEAD); // 获得head的指针
     if (fptr != NULL) {
-        fptr = ziplistFind(fptr, (unsigned char*)field, sdslen(field), 1);
+        fptr = ziplistFind(fptr, (unsigned char*)field, sdslen(field), 1); // 找field
         if (fptr != NULL) {
             /* Grab pointer to the value (fptr points to the field) */
-            vptr = ziplistNext(zl, fptr);
+            vptr = ziplistNext(zl, fptr); // 找value
             serverAssert(vptr != NULL);
         }
     }
@@ -204,69 +204,78 @@ int hashTypeExists(robj *o, sds field) {
 #define HASH_SET_TAKE_FIELD (1<<0)
 #define HASH_SET_TAKE_VALUE (1<<1)
 #define HASH_SET_COPY 0
+/**
+ * 将filed,value添加到hash(ziplist)中
+ * @param o 要添加的hash(ziplist)
+ * @param field key
+ * @param value
+ * @param flags 添加方式 set-copy:拷贝键值对
+ * @return
+ */
 int hashTypeSet(robj *o, sds field, sds value, int flags) {
-    int update = 0;
-
+    int update = 0; // 更新数
+    // 添加ziplist
     if (o->encoding == OBJ_ENCODING_ZIPLIST) {
         unsigned char *zl, *fptr, *vptr;
 
         zl = o->ptr;
-        fptr = ziplistIndex(zl, ZIPLIST_HEAD);
-        if (fptr != NULL) {
-            fptr = ziplistFind(fptr, (unsigned char*)field, sdslen(field), 1);
+        fptr = ziplistIndex(zl, ZIPLIST_HEAD); // 获得头的指针
+        if (fptr != NULL) { // 头不是空
+            fptr = ziplistFind(fptr, (unsigned char*)field, sdslen(field), 1); // 找field指针
             if (fptr != NULL) {
                 /* Grab pointer to the value (fptr points to the field) */
-                vptr = ziplistNext(zl, fptr);
+                vptr = ziplistNext(zl, fptr); // 找field对应的value的指针
                 serverAssert(vptr != NULL);
-                update = 1;
+                update = 1; // 修改
 
                 /* Delete value */
-                zl = ziplistDelete(zl, &vptr);
+                zl = ziplistDelete(zl, &vptr); // 在ziplist中删除旧指
 
                 /* Insert new value */
                 zl = ziplistInsert(zl, vptr, (unsigned char*)value,
-                        sdslen(value));
+                        sdslen(value)); // 插入新值
             }
         }
 
-        if (!update) {
+        if (!update) { // 新增
             /* Push new field/value pair onto the tail of the ziplist */
             zl = ziplistPush(zl, (unsigned char*)field, sdslen(field),
-                    ZIPLIST_TAIL);
+                    ZIPLIST_TAIL); // 将field放入队尾
             zl = ziplistPush(zl, (unsigned char*)value, sdslen(value),
-                    ZIPLIST_TAIL);
+                    ZIPLIST_TAIL); // 将value放入队尾
         }
         o->ptr = zl;
 
         /* Check if the ziplist needs to be converted to a hash table */
-        if (hashTypeLength(o) > server.hash_max_ziplist_entries)
-            hashTypeConvert(o, OBJ_ENCODING_HT);
-    } else if (o->encoding == OBJ_ENCODING_HT) {
-        dictEntry *de = dictFind(o->ptr,field);
-        if (de) {
-            sdsfree(dictGetVal(de));
-            if (flags & HASH_SET_TAKE_VALUE) {
-                dictGetVal(de) = value;
+        if (hashTypeLength(o) > server.hash_max_ziplist_entries) // 数量大于max
+            hashTypeConvert(o, OBJ_ENCODING_HT); // 进行类型转化 ziplist-->ht
+
+    } else if (o->encoding == OBJ_ENCODING_HT) { // 编码是ht
+        dictEntry *de = dictFind(o->ptr,field); // 根据field找到对应的Obj
+        if (de) { // 找到了
+            sdsfree(dictGetVal(de)); // 释放旧值
+            if (flags & HASH_SET_TAKE_VALUE) { // flags是TAKE_VALUE
+                dictGetVal(de) = value; // 直接赋新值
                 value = NULL;
-            } else {
-                dictGetVal(de) = sdsdup(value);
+            } else { // flags是set-copy
+                dictGetVal(de) = sdsdup(value); // 新值拷贝赋值
             }
-            update = 1;
-        } else {
+            update = 1; // 修改
+        } else { // 没找到 新增
             sds f,v;
-            if (flags & HASH_SET_TAKE_FIELD) {
+            if (flags & HASH_SET_TAKE_FIELD) { // 直接赋值
                 f = field;
                 field = NULL;
-            } else {
+            } else { // field拷贝
                 f = sdsdup(field);
             }
-            if (flags & HASH_SET_TAKE_VALUE) {
+            if (flags & HASH_SET_TAKE_VALUE) { // 直接赋值
                 v = value;
                 value = NULL;
-            } else {
+            } else { // val拷贝
                 v = sdsdup(value);
             }
-            dictAdd(o->ptr,f,v);
+            dictAdd(o->ptr,f,v); // 将field和val添加到dict中 o->ptr:hash
         }
     } else {
         serverPanic("Unknown hash encoding");
@@ -452,19 +461,24 @@ sds hashTypeCurrentObjectNewSds(hashTypeIterator *hi, int what) {
     if (vstr) return sdsnewlen(vstr,vlen);
     return sdsfromlonglong(vll);
 }
-
+/**
+ * 根据key查找hash 不存在则创建新的hash
+ * @param c
+ * @param key
+ * @return
+ */
 robj *hashTypeLookupWriteOrCreate(client *c, robj *key) {
-    robj *o = lookupKeyWrite(c->db,key);
-    if (o == NULL) {
-        o = createHashObject();
-        dbAdd(c->db,key,o);
-    } else {
-        if (o->type != OBJ_HASH) {
-            addReply(c,shared.wrongtypeerr);
+    robj *o = lookupKeyWrite(c->db,key); // 在db中查找key对应的obj
+    if (o == NULL) { // 没找到
+        o = createHashObject(); // 创建新的Obj 实际是ziplist
+        dbAdd(c->db,key,o); // kv添加到db中
+    } else { // 找到了
+        if (o->type != OBJ_HASH) { // 类型不是hash
+            addReply(c,shared.wrongtypeerr); // 返回类型错误
             return NULL;
         }
     }
-    return o;
+    return o; // 返回obj
 }
 
 void hashTypeConvertZiplist(robj *o, int enc) {
@@ -473,38 +487,42 @@ void hashTypeConvertZiplist(robj *o, int enc) {
     if (enc == OBJ_ENCODING_ZIPLIST) {
         /* Nothing to do... */
 
-    } else if (enc == OBJ_ENCODING_HT) {
+    } else if (enc == OBJ_ENCODING_HT) { // 要转ht
         hashTypeIterator *hi;
         dict *dict;
         int ret;
 
-        hi = hashTypeInitIterator(o);
-        dict = dictCreate(&hashDictType, NULL);
+        hi = hashTypeInitIterator(o); // 创建迭代器
+        dict = dictCreate(&hashDictType, NULL); // 创建dict
 
         while (hashTypeNext(hi) != C_ERR) {
             sds key, value;
 
-            key = hashTypeCurrentObjectNewSds(hi,OBJ_HASH_KEY);
-            value = hashTypeCurrentObjectNewSds(hi,OBJ_HASH_VALUE);
-            ret = dictAdd(dict, key, value);
+            key = hashTypeCurrentObjectNewSds(hi,OBJ_HASH_KEY); // 获得key
+            value = hashTypeCurrentObjectNewSds(hi,OBJ_HASH_VALUE); // 获得value
+            ret = dictAdd(dict, key, value); // 添加到dict
             if (ret != DICT_OK) {
                 serverLogHexDump(LL_WARNING,"ziplist with dup elements dump",
                     o->ptr,ziplistBlobLen(o->ptr));
                 serverPanic("Ziplist corruption detected");
             }
         }
-        hashTypeReleaseIterator(hi);
+        hashTypeReleaseIterator(hi); // 释放迭代器
         zfree(o->ptr);
-        o->encoding = OBJ_ENCODING_HT;
+        o->encoding = OBJ_ENCODING_HT; // 转编码
         o->ptr = dict;
     } else {
         serverPanic("Unknown hash encoding");
     }
 }
-
+/**
+ * obj的编码转化为ht
+ * @param o
+ * @param enc
+ */
 void hashTypeConvert(robj *o, int enc) {
     if (o->encoding == OBJ_ENCODING_ZIPLIST) {
-        hashTypeConvertZiplist(o, enc);
+        hashTypeConvertZiplist(o, enc); // 转化
     } else if (o->encoding == OBJ_ENCODING_HT) {
         serverPanic("Not implemented");
     } else {
@@ -531,20 +549,23 @@ void hsetnxCommand(client *c) {
         server.dirty++;
     }
 }
-
+/**
+ * hset key field1 value1 field2 value ...
+ * @param c
+ */
 void hsetCommand(client *c) {
     int i, created = 0;
     robj *o;
 
-    if ((c->argc % 2) == 1) {
-        addReplyError(c,"wrong number of arguments for HMSET");
+    if ((c->argc % 2) == 1) { // 参数为奇数
+        addReplyError(c,"wrong number of arguments for HMSET"); // 返回错误的参数个数
         return;
     }
 
-    if ((o = hashTypeLookupWriteOrCreate(c,c->argv[1])) == NULL) return;
-    hashTypeTryConversion(o,c->argv,2,c->argc-1);
+    if ((o = hashTypeLookupWriteOrCreate(c,c->argv[1])) == NULL) return; // 查找hash不存在则创建  默认创建zl
+    hashTypeTryConversion(o,c->argv,2,c->argc-1); // 尝试zl转化ht field1 value1 field2 value ...
 
-    for (i = 2; i < c->argc; i += 2)
+    for (i = 2; i < c->argc; i += 2) // 循环参数 field1 value1 field2 value ... 键值对处理
         created += !hashTypeSet(o,c->argv[i]->ptr,c->argv[i+1]->ptr,HASH_SET_COPY);
 
     /* HMSET (deprecated) and HSET return value is different. */
@@ -645,37 +666,42 @@ void hincrbyfloatCommand(client *c) {
     rewriteClientCommandArgument(c,3,newobj);
     decrRefCount(newobj);
 }
-
+/**
+ * 在hash中招filed对应的value
+ * @param c client
+ * @param o redisObject
+ * @param field key
+ */
 static void addHashFieldToReply(client *c, robj *o, sds field) {
     int ret;
 
-    if (o == NULL) {
-        addReply(c, shared.nullbulk);
+    if (o == NULL) { // 如果obj是空
+        addReply(c, shared.nullbulk); // 应答空
         return;
     }
 
-    if (o->encoding == OBJ_ENCODING_ZIPLIST) {
+    if (o->encoding == OBJ_ENCODING_ZIPLIST) { // 编码是ziplist
         unsigned char *vstr = NULL;
         unsigned int vlen = UINT_MAX;
         long long vll = LLONG_MAX;
 
-        ret = hashTypeGetFromZiplist(o, field, &vstr, &vlen, &vll);
+        ret = hashTypeGetFromZiplist(o, field, &vstr, &vlen, &vll); // 在ziplist中招filed对应的值 vstr:返回字符串 vll:返回数字
         if (ret < 0) {
             addReply(c, shared.nullbulk);
         } else {
             if (vstr) {
-                addReplyBulkCBuffer(c, vstr, vlen);
+                addReplyBulkCBuffer(c, vstr, vlen); // 添加到字符串缓冲区
             } else {
-                addReplyBulkLongLong(c, vll);
+                addReplyBulkLongLong(c, vll); // 添加到数字缓冲区
             }
         }
 
-    } else if (o->encoding == OBJ_ENCODING_HT) {
-        sds value = hashTypeGetFromHashTable(o, field);
+    } else if (o->encoding == OBJ_ENCODING_HT) { // 编码是ht
+        sds value = hashTypeGetFromHashTable(o, field); // 在hash中找filed对应的value
         if (value == NULL)
             addReply(c, shared.nullbulk);
         else
-            addReplyBulkCBuffer(c, value, sdslen(value));
+            addReplyBulkCBuffer(c, value, sdslen(value)); // 添加到字符串缓冲
     } else {
         serverPanic("Unknown hash encoding");
     }
@@ -689,22 +715,25 @@ void hgetCommand(client *c) {
 
     addHashFieldToReply(c, o, c->argv[2]->ptr);
 }
-
+/**
+ * hmget key filed1 filed2 ...
+ * @param c
+ */
 void hmgetCommand(client *c) {
     robj *o;
     int i;
 
     /* Don't abort when the key cannot be found. Non-existing keys are empty
      * hashes, where HMGET should respond with a series of null bulks. */
-    o = lookupKeyRead(c->db, c->argv[1]);
-    if (o != NULL && o->type != OBJ_HASH) {
-        addReply(c, shared.wrongtypeerr);
+    o = lookupKeyRead(c->db, c->argv[1]); // 从db中招key对应的value redisObj
+    if (o != NULL && o->type != OBJ_HASH) { // 找到了并且obj的类型不是hash
+        addReply(c, shared.wrongtypeerr); // 应答错误类型
         return;
     }
 
-    addReplyMultiBulkLen(c, c->argc-2);
-    for (i = 2; i < c->argc; i++) {
-        addHashFieldToReply(c, o, c->argv[i]->ptr);
+    addReplyMultiBulkLen(c, c->argc-2); // 应答结果所
+    for (i = 2; i < c->argc; i++) { // 循环
+        addHashFieldToReply(c, o, c->argv[i]->ptr); // 在hash中招filed对应的value
     }
 }
 

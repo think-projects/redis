@@ -55,13 +55,17 @@ size_t streamReplyWithRangeFromConsumerPEL(client *c, stream *s, streamID *start
  * ----------------------------------------------------------------------- */
 
 /* Create a new stream data structure. */
+/**
+ * 初始化stream
+ * @return
+ */
 stream *streamNew(void) {
-    stream *s = zmalloc(sizeof(*s));
-    s->rax = raxNew();
-    s->length = 0;
-    s->last_id.ms = 0;
+    stream *s = zmalloc(sizeof(*s)); // 申请内存
+    s->rax = raxNew(); // 创建rax树
+    s->length = 0; // len=0
+    s->last_id.ms = 0; // 最后的StreamId=0
     s->last_id.seq = 0;
-    s->cgroups = NULL; /* Created on demand to save memory when not used. */
+    s->cgroups = NULL; /* Created on demand to save memory when not used. */ // 消费组空
     return s;
 }
 
@@ -202,20 +206,29 @@ int streamCompareID(streamID *a, streamID *b) {
  *    current top ID is greater or equal. errno will be set to EDOM.
  * 2. If a size of a single element or the sum of the elements is too big to
  *    be stored into the stream. errno will be set to ERANGE. */
+/**
+ * 添加消息
+ * @param s 消息六
+ * @param argv 要添加的消息 argv[0]: field_1 argv[1]: field_1
+ * @param numfields field域
+ * @param added_id 返回新的消息id
+ * @param use_id 给定的消息id
+ * @return C_ERR:添加失败(-1) C_OK: 添加成功(0)
+ */
 int streamAppendItem(stream *s, robj **argv, int64_t numfields, streamID *added_id, streamID *use_id) {
     
     /* Generate the new entry ID. */
     streamID id;
-    if (use_id)
-        id = *use_id;
-    else
-        streamNextID(&s->last_id,&id);
+    if (use_id) // 如果给定消息id有效
+        id = *use_id; // 使用该id
+    else // 没有给定消息id
+        streamNextID(&s->last_id,&id); // 生成新消息id
 
     /* Check that the new ID is greater than the last entry ID
      * or return an error. Automatically generated IDs might
      * overflow (and wrap-around) when incrementing the sequence 
        part. */
-    if (streamCompareID(&id,&s->last_id) <= 0) {
+    if (streamCompareID(&id,&s->last_id) <= 0) { // 如果有给定id 并且 比当前stream中最大的StreamId小 返回添加失败
         errno = EDOM;
         return C_ERR;
     }
@@ -235,14 +248,14 @@ int streamAppendItem(stream *s, robj **argv, int64_t numfields, streamID *added_
 
     /* Add the new entry. */
     raxIterator ri;
-    raxStart(&ri,s->rax);
+    raxStart(&ri,s->rax); // 找到最后一个key
     raxSeek(&ri,"$",NULL,0);
 
     size_t lp_bytes = 0;        /* Total bytes in the tail listpack. */
     unsigned char *lp = NULL;   /* Tail listpack pointer. */
 
     /* Get a reference to the tail node listpack. */
-    if (raxNext(&ri)) {
+    if (raxNext(&ri)) { // 获得key对应的data listpack
         lp = ri.data;
         lp_bytes = lpBytes(lp);
     }
@@ -289,24 +302,24 @@ int streamAppendItem(stream *s, robj **argv, int64_t numfields, streamID *added_
     /* First of all, check if we can append to the current macro node or
      * if we need to switch to the next one. 'lp' will be set to NULL if
      * the current node is full. */
-    if (lp != NULL) {
+    if (lp != NULL) { // 有listpack
         size_t node_max_bytes = server.stream_node_max_bytes;
         if (node_max_bytes == 0 || node_max_bytes > STREAM_LISTPACK_MAX_SIZE)
             node_max_bytes = STREAM_LISTPACK_MAX_SIZE;
-        if (lp_bytes + totelelen >= node_max_bytes) {
-            lp = NULL;
-        } else if (server.stream_node_max_entries) {
+        if (lp_bytes + totelelen >= node_max_bytes) { // 当前listpack大小大于node_max_bytes
+            lp = NULL; // 创建新的listpack
+        } else if (server.stream_node_max_entries) { // 当前listpack的节点大于stream_node_max_entries
             int64_t count = lpGetInteger(lpFirst(lp));
-            if (count >= server.stream_node_max_entries) lp = NULL;
+            if (count >= server.stream_node_max_entries) lp = NULL; // 创建新的listpack
         }
     }
 
-    int flags = STREAM_ITEM_FLAG_NONE;
-    if (lp == NULL || lp_bytes >= server.stream_node_max_bytes) {
-        master_id = id;
+    int flags = STREAM_ITEM_FLAG_NONE; // 默认flags是普通
+    if (lp == NULL || lp_bytes >= server.stream_node_max_bytes) { // 创建新的listpack
+        master_id = id; // 赋值mid
         streamEncodeID(rax_key,&id);
         /* Create the listpack having the master entry ID and fields. */
-        lp = lpNew();
+        lp = lpNew(); // 创建新的listpack
         lp = lpAppendInteger(lp,1); /* One item, the one we are adding. */
         lp = lpAppendInteger(lp,0); /* Zero deleted so far. */
         lp = lpAppendInteger(lp,numfields);
@@ -315,26 +328,26 @@ int streamAppendItem(stream *s, robj **argv, int64_t numfields, streamID *added_
             lp = lpAppend(lp,(unsigned char*)field,sdslen(field));
         }
         lp = lpAppendInteger(lp,0); /* Master entry zero terminator. */
-        raxInsert(s->rax,(unsigned char*)&rax_key,sizeof(rax_key),lp,NULL);
+        raxInsert(s->rax,(unsigned char*)&rax_key,sizeof(rax_key),lp,NULL); // 把消息id和对应的listpack指针更新到rax树中
         /* The first entry we insert, has obviously the same fields of the
          * master entry. */
-        flags |= STREAM_ITEM_FLAG_SAMEFIELDS;
-    } else {
+        flags |= STREAM_ITEM_FLAG_SAMEFIELDS; // flag = save
+    } else { // 更新到当前listpack
         serverAssert(ri.key_len == sizeof(rax_key));
         memcpy(rax_key,ri.key,sizeof(rax_key));
 
         /* Read the master ID from the radix tree key. */
-        streamDecodeID(rax_key,&master_id);
+        streamDecodeID(rax_key,&master_id); // 获得master id
         unsigned char *lp_ele = lpFirst(lp);
 
         /* Update count and skip the deleted fields. */
-        int64_t count = lpGetInteger(lp_ele);
+        int64_t count = lpGetInteger(lp_ele); // 更新count
         lp = lpReplaceInteger(lp,&lp_ele,count+1);
         lp_ele = lpNext(lp,lp_ele); /* seek deleted. */
         lp_ele = lpNext(lp,lp_ele); /* seek master entry num fields. */
 
         /* Check if the entry we are adding, have the same fields
-         * as the master entry. */
+         * as the master entry. */ // 处理flag
         int64_t master_fields_count = lpGetInteger(lp_ele);
         lp_ele = lpNext(lp,lp_ele);
         if (numfields == master_fields_count) {
@@ -351,7 +364,7 @@ int streamAppendItem(stream *s, robj **argv, int64_t numfields, streamID *added_
             }
             /* All fields are the same! We can compress the field names
              * setting a single bit in the flags. */
-            if (i == master_fields_count) flags |= STREAM_ITEM_FLAG_SAMEFIELDS;
+            if (i == master_fields_count) flags |= STREAM_ITEM_FLAG_SAMEFIELDS; // 添加消息的filed域与master entry 相同 flags = same
         }
     }
 
@@ -378,29 +391,31 @@ int streamAppendItem(stream *s, robj **argv, int64_t numfields, streamID *added_
      * the entry, and jump back N times to seek the "flags" field to read
      * the stream full entry. */
     lp = lpAppendInteger(lp,flags);
+    // 计算id的差
     lp = lpAppendInteger(lp,id.ms - master_id.ms);
     lp = lpAppendInteger(lp,id.seq - master_id.seq);
     if (!(flags & STREAM_ITEM_FLAG_SAMEFIELDS))
         lp = lpAppendInteger(lp,numfields);
+    // 将消息内容写入listpack
     for (int64_t i = 0; i < numfields; i++) {
         sds field = argv[i*2]->ptr, value = argv[i*2+1]->ptr;
         if (!(flags & STREAM_ITEM_FLAG_SAMEFIELDS))
             lp = lpAppend(lp,(unsigned char*)field,sdslen(field));
         lp = lpAppend(lp,(unsigned char*)value,sdslen(value));
     }
-    /* Compute and store the lp-count field. */
+    /* Compute and store the lp-count field. */ // 计算lp_count
     int64_t lp_count = numfields;
-    lp_count += 3; /* Add the 3 fixed fields flags + ms-diff + seq-diff. */
+    lp_count += 3; /* Add the 3 fixed fields flags + ms-diff + seq-diff. */ // N + 3
     if (!(flags & STREAM_ITEM_FLAG_SAMEFIELDS)) {
         /* If the item is not compressed, it also has the fields other than
          * the values, and an additional num-fileds field. */
-        lp_count += numfields+1;
+        lp_count += numfields+1; // 2N + 4
     }
     lp = lpAppendInteger(lp,lp_count);
 
     /* Insert back into the tree in order to update the listpack pointer. */
-    if (ri.data != lp)
-        raxInsert(s->rax,(unsigned char*)&rax_key,sizeof(rax_key),lp,NULL);
+    if (ri.data != lp) //指针变更
+        raxInsert(s->rax,(unsigned char*)&rax_key,sizeof(rax_key),lp,NULL); // 更新rax树 消息id 指向value的指针
     s->length++;
     s->last_id = id;
     if (added_id) *added_id = id;
@@ -965,41 +980,56 @@ void streamPropagateGroupID(client *c, robj *key, streamCG *group, robj *groupna
 #define STREAM_RWR_RAWENTRIES (1<<1)    /* Do not emit protocol for array
                                            boundaries, just the entries. */
 #define STREAM_RWR_HISTORY (1<<2)       /* Only serve consumer local PEL. */
+/**
+ * 读取（应答）范围内消息
+ * @param c 要应答的client
+ * @param s 消息流
+ * @param start 起始读取id
+ * @param end 结束读取id
+ * @param count 读取条数
+ * @param rev 是否反向读取
+ * @param group 消费组
+ * @param consumer 消费者
+ * @param flags 读取标识
+ * @param spi 传播标识
+ * @return 读取条数
+ */
 size_t streamReplyWithRange(client *c, stream *s, streamID *start, streamID *end, size_t count, int rev, streamCG *group, streamConsumer *consumer, int flags, streamPropInfo *spi) {
-    void *arraylen_ptr = NULL;
-    size_t arraylen = 0;
-    streamIterator si;
-    int64_t numfields;
-    streamID id;
-    int propagate_last_id = 0;
+    void *arraylen_ptr = NULL; // 空消息指针
+    size_t arraylen = 0; // 读取条数
+    streamIterator si; // stream迭代器
+    int64_t numfields; // field域数
+    streamID id; // 消息id
+    int propagate_last_id = 0; // 组传播标识
 
     /* If the client is asking for some history, we serve it using a
      * different function, so that we return entries *solely* from its
      * own PEL. This ensures each consumer will always and only see
      * the history of messages delivered to it and not yet confirmed
      * as delivered. */
-    if (group && (flags & STREAM_RWR_HISTORY)) {
+    if (group && (flags & STREAM_RWR_HISTORY)) { // 组存在并且起始id小于组最大id
         return streamReplyWithRangeFromConsumerPEL(c,s,start,end,count,
-                                                   consumer);
+                                                   consumer); // 读取消费者待处理消息(历史消息)
     }
 
-    if (!(flags & STREAM_RWR_RAWENTRIES))
-        arraylen_ptr = addDeferredMultiBulkLength(c);
-    streamIteratorStart(&si,s,start,end,rev);
-    while(streamIteratorGetID(&si,&id,&numfields)) {
+    if (!(flags & STREAM_RWR_RAWENTRIES)) // flag不包含ENTRIES
+        arraylen_ptr = addDeferredMultiBulkLength(c); // 应答空消息
+    // 正常读取
+    streamIteratorStart(&si,s,start,end,rev); // 初始化stream迭代器 获得stream.rax
+    while(streamIteratorGetID(&si,&id,&numfields)) { // 循环读取stream.rax
         /* Update the group last_id if needed. */
-        if (group && streamCompareID(&id,&group->last_id) > 0) {
-            group->last_id = id;
-            propagate_last_id = 1;
+        if (group && streamCompareID(&id,&group->last_id) > 0) { // 有新消息
+            group->last_id = id; // 更新消费组last_id
+            propagate_last_id = 1; // 允许传播
         }
 
         /* Emit a two elements array for each item. The first is
          * the ID, the second is an array of field-value pairs. */
         addReplyMultiBulkLen(c,2);
-        addReplyStreamID(c,&id);
+        addReplyStreamID(c,&id); // 添加消息id
         addReplyMultiBulkLen(c,numfields*2);
 
-        /* Emit the field-value pairs. */
+        /* Emit the field-value pairs. */ // 添加消息域 f-v
         while(numfields--) {
             unsigned char *key, *value;
             int64_t key_len, value_len;
@@ -1017,23 +1047,23 @@ size_t streamReplyWithRange(client *c, stream *s, streamID *start, streamID *end
          * XGROUP SETID command. So if we find that there is already
          * a NACK for the entry, we need to associate it to the new
          * consumer. */
-        if (group && !(flags & STREAM_RWR_NOACK)) {
+        if (group && !(flags & STREAM_RWR_NOACK)) { // 有组并且flag不包含NOACK 需要应答
             unsigned char buf[sizeof(streamID)];
             streamEncodeID(buf,&id);
 
             /* Try to add a new NACK. Most of the time this will work and
              * will not require extra lookups. We'll fix the problem later
              * if we find that there is already a entry for this ID. */
-            streamNACK *nack = streamCreateNACK(consumer);
+            streamNACK *nack = streamCreateNACK(consumer); // 创建streamNACK
             int group_inserted =
-                raxTryInsert(group->pel,buf,sizeof(buf),nack,NULL);
+                raxTryInsert(group->pel,buf,sizeof(buf),nack,NULL); // 插入到消费组的pel
             int consumer_inserted =
-                raxTryInsert(consumer->pel,buf,sizeof(buf),nack,NULL);
+                raxTryInsert(consumer->pel,buf,sizeof(buf),nack,NULL); // 插入到消费者的pel
 
             /* Now we can check if the entry was already busy, and
              * in that case reassign the entry to the new consumer,
              * or update it if the consumer is the same as before. */
-            if (group_inserted == 0) {
+            if (group_inserted == 0) { // 消费组不应答但消费者映带
                 streamFreeNACK(nack);
                 nack = raxFind(group->pel,buf,sizeof(buf));
                 serverAssert(nack != raxNotFound);
@@ -1043,28 +1073,28 @@ size_t streamReplyWithRange(client *c, stream *s, streamID *start, streamID *end
                 nack->delivery_time = mstime();
                 nack->delivery_count = 1;
                 /* Add the entry in the new consumer local PEL. */
-                raxInsert(consumer->pel,buf,sizeof(buf),nack,NULL);
-            } else if (group_inserted == 1 && consumer_inserted == 0) {
+                raxInsert(consumer->pel,buf,sizeof(buf),nack,NULL); // 插入消费者pel
+            } else if (group_inserted == 1 && consumer_inserted == 0) { // 不存在(消费组应答但消费者不应答)
                 serverPanic("NACK half-created. Should not be possible.");
             }
 
             /* Propagate as XCLAIM. */
-            if (spi) {
+            if (spi) { // 需要传播
                 robj *idarg = createObjectFromStreamID(&id);
-                streamPropagateXCLAIM(c,spi->keyname,group,spi->groupname,idarg,nack);
+                streamPropagateXCLAIM(c,spi->keyname,group,spi->groupname,idarg,nack); // 将nack转化为命令并传播到aof和从节点
                 decrRefCount(idarg);
             }
         } else {
-            if (propagate_last_id)
-                streamPropagateGroupID(c,spi->keyname,group,spi->groupname);
+            if (propagate_last_id) // 需要组传播
+                streamPropagateGroupID(c,spi->keyname,group,spi->groupname); // 将最新的group.last_id转化命令传播到aof和从节点
         }
 
-        arraylen++;
+        arraylen++; // 读取长度自增
         if (count && count == arraylen) break;
     }
-    streamIteratorStop(&si);
+    streamIteratorStop(&si); // 读取完毕,关闭stream迭代器
     if (arraylen_ptr) setDeferredMultiBulkLength(c,arraylen_ptr,arraylen);
-    return arraylen;
+    return arraylen; // 返回读取长度
 }
 
 /* This is an helper function for streamReplyWithRange() when called with
@@ -1412,6 +1442,10 @@ void xlenCommand(client *c) {
  * This is useful because while XREAD is a read command and can be called
  * on slaves, XREAD-GROUP is not. */
 #define XREAD_BLOCKED_DEFAULT_COUNT 1000
+/**
+ * 读取消息命令
+ * @param c
+ */
 void xreadCommand(client *c) {
     long long timeout = -1; /* -1 means, no BLOCK argument given. */
     long long count = 0;
@@ -1426,7 +1460,7 @@ void xreadCommand(client *c) {
     robj *groupname = NULL;
     robj *consumername = NULL;
 
-    /* Parse arguments. */
+    /* Parse arguments. */ // 参数校验
     for (int i = 1; i < c->argc; i++) {
         int moreargs = c->argc-i-1;
         char *o = c->argv[i]->ptr;
@@ -1488,14 +1522,15 @@ void xreadCommand(client *c) {
     /* Parse the IDs and resolve the group name. */
     if (streams_count > STREAMID_STATIC_VECTOR_LEN)
         ids = zmalloc(sizeof(streamID)*streams_count);
-    if (groupname) groups = zmalloc(sizeof(streamCG*)*streams_count);
-
+    if (groupname) groups = zmalloc(sizeof(streamCG*)*streams_count); // 有组 则要为每个stream申请streamCG的内存空间
+    // 循环遍历所有的stream名字和后面的id
+    // 根据id来设置对应的stream ids的读取的起始位置
     for (int i = streams_arg + streams_count; i < c->argc; i++) {
         /* Specifying "$" as last-known-id means that the client wants to be
          * served with just the messages that will arrive into the stream
          * starting from now. */
-        int id_idx = i - streams_arg - streams_count;
-        robj *key = c->argv[i-streams_count];
+        int id_idx = i - streams_arg - streams_count; // id:每个stream对应的起始id id_ids:第几个stream的id
+        robj *key = c->argv[i-streams_count]; // key对应i的stream位置
         robj *o = lookupKeyRead(c->db,key);
         if (o && checkType(c,o,OBJ_STREAM)) goto cleanup;
         streamCG *group = NULL;
@@ -1515,7 +1550,7 @@ void xreadCommand(client *c) {
             groups[id_idx] = group;
         }
 
-        if (strcmp(c->argv[i]->ptr,"$") == 0) {
+        if (strcmp(c->argv[i]->ptr,"$") == 0) { // 处理参数id 是"$"
             if (xreadgroup) {
                 addReplyError(c,"The $ ID is meaningless in the context of "
                                 "XREADGROUP: you want to read the history of "
@@ -1526,13 +1561,13 @@ void xreadCommand(client *c) {
             }
             if (o) {
                 stream *s = o->ptr;
-                ids[id_idx] = s->last_id;
+                ids[id_idx] = s->last_id; // 每个stream的起始id=当前消息的最大id
             } else {
                 ids[id_idx].ms = 0;
                 ids[id_idx].seq = 0;
             }
             continue;
-        } else if (strcmp(c->argv[i]->ptr,">") == 0) {
+        } else if (strcmp(c->argv[i]->ptr,">") == 0) { // 处理参数id 是">"
             if (!xreadgroup) {
                 addReplyError(c,"The > ID can be specified only when calling "
                                 "XREADGROUP using the GROUP <group> "
@@ -1542,28 +1577,28 @@ void xreadCommand(client *c) {
             /* We use just the maximum ID to signal this is a ">" ID, anyway
              * the code handling the blocking clients will have to update the
              * ID later in order to match the changing consumer group last ID. */
-            ids[id_idx].ms = UINT64_MAX;
+            ids[id_idx].ms = UINT64_MAX; // streamId --ids[id_idx] = group->.lastid
             ids[id_idx].seq = UINT64_MAX;
             continue;
         }
         if (streamParseStrictIDOrReply(c,c->argv[i],ids+id_idx,0) != C_OK)
             goto cleanup;
     }
-
+    // 同步读取数据
     /* Try to serve the client synchronously. */
     size_t arraylen = 0;
     void *arraylen_ptr = NULL;
-    for (int i = 0; i < streams_count; i++) {
-        robj *o = lookupKeyRead(c->db,c->argv[streams_arg+i]);
+    for (int i = 0; i < streams_count; i++) { // 便利每个stream
+        robj *o = lookupKeyRead(c->db,c->argv[streams_arg+i]); // 找到对应的stream结构
         if (o == NULL) continue;
         stream *s = o->ptr;
-        streamID *gt = ids+i; /* ID must be greater than this. */
-        int serve_synchronously = 0;
+        streamID *gt = ids+i; /* ID must be greater than this. */ // 大于ids
+        int serve_synchronously = 0; // 读取标识 1：可读
         int serve_history = 0; /* True for XREADGROUP with ID != ">". */
 
         /* Check if there are the conditions to serve the client
          * synchronously. */
-        if (groups) {
+        if (groups) { // 有组
             /* If the consumer is blocked on a group, we always serve it
              * synchronously (serving its local history) if the ID specified
              * was not the special ">" ID. */
@@ -1578,57 +1613,57 @@ void xreadCommand(client *c) {
                  * than what the stream has inside. */
                 streamID maxid, *last = &groups[i]->last_id;
                 streamLastValidID(s, &maxid);
-                if (streamCompareID(&maxid, last) > 0) {
-                    serve_synchronously = 1;
+                if (streamCompareID(&maxid, last) > 0) { // 当前消息id大于组消费消息的最大id 有新数据
+                    serve_synchronously = 1; // 设置可读
                     *gt = *last;
                 }
             }
-        } else if (s->length) {
+        } else if (s->length) { // 无组
             /* For consumers without a group, we serve synchronously if we can
              * actually provide at least one item from the stream. */
             streamID maxid;
             streamLastValidID(s, &maxid);
-            if (streamCompareID(&maxid, gt) > 0) {
+            if (streamCompareID(&maxid, gt) > 0) { // 当前stream的最大id大于参数id 可读
                 serve_synchronously = 1;
             }
         }
 
-        if (serve_synchronously) {
+        if (serve_synchronously) { // 如果可读
             arraylen++;
             if (arraylen == 1) arraylen_ptr = addDeferredMultiBulkLength(c);
             /* streamReplyWithRange() handles the 'start' ID as inclusive,
              * so start from the next ID, since we want only messages with
              * IDs greater than start. */
-            streamID start = *gt;
+            streamID start = *gt; // 读取起始位置
             streamIncrID(&start);
 
             /* Emit the two elements sub-array consisting of the name
              * of the stream and the data we extracted from it. */
-            addReplyMultiBulkLen(c,2);
+            addReplyMultiBulkLen(c,2); // 回复结构
             addReplyBulk(c,c->argv[streams_arg+i]);
             streamConsumer *consumer = NULL;
             if (groups) consumer = streamLookupConsumer(groups[i],
                                                         consumername->ptr,
-                                                        SLC_NONE);
+                                                        SLC_NONE); // 获得组中的消费者
             streamPropInfo spi = {c->argv[i+streams_arg],groupname};
             int flags = 0;
             if (noack) flags |= STREAM_RWR_NOACK;
             if (serve_history) flags |= STREAM_RWR_HISTORY;
             streamReplyWithRange(c,s,&start,NULL,count,0,
                                  groups ? groups[i] : NULL,
-                                 consumer, flags, &spi);
+                                 consumer, flags, &spi); // 同步读取数据
             if (groups) server.dirty++;
         }
     }
 
      /* We replied synchronously! Set the top array len and return to caller. */
-    if (arraylen) {
+    if (arraylen) { // 如果arraylen不为0，就不需要阻塞
         setDeferredMultiBulkLength(c,arraylen_ptr,arraylen);
         goto cleanup;
     }
 
     /* Block if needed. */
-    if (timeout != -1) {
+    if (timeout != -1) { // 没有读到数据
         /* If we are inside a MULTI/EXEC and the list is empty the only thing
          * we can do is treating it as a timeout (even with timeout 0). */
         if (c->flags & CLIENT_MULTI) {
@@ -1636,7 +1671,7 @@ void xreadCommand(client *c) {
             goto cleanup;
         }
         blockForKeys(c, BLOCKED_STREAM, c->argv+streams_arg, streams_count,
-                     timeout, NULL, ids);
+                     timeout, NULL, ids); // 阻塞等待 redis的block机制
         /* If no COUNT is given and we block, set a relatively small count:
          * in case the ID provided is too low, we do not want the server to
          * block just to serve this client a huge stream of messages. */
@@ -1646,11 +1681,11 @@ void xreadCommand(client *c) {
          * group and consumer name we are blocking, so later when one of the
          * keys receive more data, we can call streamReplyWithRange() passing
          * the right arguments. */
-        if (groupname) {
-            incrRefCount(groupname);
+        if (groupname) { // 有组
+            incrRefCount(groupname); // 记录消费组名
             incrRefCount(consumername);
             c->bpop.xread_group = groupname;
-            c->bpop.xread_consumer = consumername;
+            c->bpop.xread_consumer = consumername; // 记录消费者名
             c->bpop.xread_group_noack = noack;
         } else {
             c->bpop.xread_group = NULL;
@@ -1709,17 +1744,25 @@ void streamFreeConsumer(streamConsumer *sc) {
  * specified name and last server ID. If a consumer group with the same name
  * already existed NULL is returned, otherwise the pointer to the consumer
  * group is returned. */
+/**
+ * 创建消费组
+ * @param s 给定消息流
+ * @param name 消费组名称
+ * @param namelen 名称的长度
+ * @param id 消息id
+ * @return 消费组地址
+ */
 streamCG *streamCreateCG(stream *s, char *name, size_t namelen, streamID *id) {
-    if (s->cgroups == NULL) s->cgroups = raxNew();
-    if (raxFind(s->cgroups,(unsigned char*)name,namelen) != raxNotFound)
-        return NULL;
-
+    if (s->cgroups == NULL) s->cgroups = raxNew(); // 消息的消费组为空 创建爱你消费组
+    if (raxFind(s->cgroups,(unsigned char*)name,namelen) != raxNotFound) // 根据名称查找消费组
+        return NULL; // 有则创建失败
+    // 申请内存
     streamCG *cg = zmalloc(sizeof(*cg));
-    cg->pel = raxNew();
-    cg->consumers = raxNew();
-    cg->last_id = *id;
-    raxInsert(s->cgroups,(unsigned char*)name,namelen,cg,NULL);
-    return cg;
+    cg->pel = raxNew(); // 初始化待处理列表
+    cg->consumers = raxNew(); // 初始化消费者
+    cg->last_id = *id; // 初始化最后消息id
+    raxInsert(s->cgroups,(unsigned char*)name,namelen,cg,NULL); // 插入rax树 key:name value:cg
+    return cg; // 返回消费者组指针
 }
 
 /* Free a consumer group and all its associated data. */
@@ -1742,21 +1785,28 @@ streamCG *streamLookupCG(stream *s, sds groupname) {
  * consumer does not exist it is automatically created as a side effect
  * of calling this function, otherwise its last seen time is updated and
  * the existing consumer reference returned. */
+/**
+ * 创建消费者
+ * @param cg 要找的消费组
+ * @param name 消费者名称
+ * @param flags 创建标识 1:创建
+ * @return consumer
+ */
 streamConsumer *streamLookupConsumer(streamCG *cg, sds name, int flags) {
     int create = !(flags & SLC_NOCREAT);
     int refresh = !(flags & SLC_NOREFRESH);
     streamConsumer *consumer = raxFind(cg->consumers,(unsigned char*)name,
-                               sdslen(name));
-    if (consumer == raxNotFound) {
-        if (!create) return NULL;
-        consumer = zmalloc(sizeof(*consumer));
-        consumer->name = sdsdup(name);
-        consumer->pel = raxNew();
+                               sdslen(name)); // 根据name找消费者
+    if (consumer == raxNotFound) { // 如果没有找到
+        if (!create) return NULL; // 如果创建标识不为1则返回
+        consumer = zmalloc(sizeof(*consumer)); // 申请内存
+        consumer->name = sdsdup(name); // 赋值name
+        consumer->pel = raxNew(); // 创建pl
         raxInsert(cg->consumers,(unsigned char*)name,sdslen(name),
-                  consumer,NULL);
+                  consumer,NULL); // 插入到消费组中 key:name value:consumer
     }
-    if (refresh) consumer->seen_time = mstime();
-    return consumer;
+    if (refresh) consumer->seen_time = mstime(); // 找到了 更新访问是啊金
+    return consumer; // 返回消费者指针
 }
 
 /* Delete the consumer specified in the consumer group 'cg'. The consumer

@@ -976,26 +976,34 @@ client *lookupClientByID(uint64_t id) {
 
 /* Write data in output buffers to client. Return C_OK if the client
  * is still valid after the call, C_ERR if it was freed. */
+/**
+ * 将输出缓冲区的数据写入socket
+ * @param fd
+ * @param c
+ * @param handler_installed
+ * @return
+ */
 int writeToClient(int fd, client *c, int handler_installed) {
     ssize_t nwritten = 0, totwritten = 0;
     size_t objlen;
     clientReplyBlock *o;
 
-    while(clientHasPendingReplies(c)) {
-        if (c->bufpos > 0) {
-            nwritten = write(fd,c->buf+c->sentlen,c->bufpos-c->sentlen);
+    while(clientHasPendingReplies(c)) { // 有未写入的数据
+        if (c->bufpos > 0) { // 输出缓冲区有数据
+            nwritten = write(fd,c->buf+c->sentlen,c->bufpos-c->sentlen); // 写入到fd的socket
             if (nwritten <= 0) break;
             c->sentlen += nwritten;
             totwritten += nwritten;
 
             /* If the buffer was sent, set bufpos to zero to continue with
              * the remainder of the reply. */
-            if ((int)c->sentlen == c->bufpos) {
+            if ((int)c->sentlen == c->bufpos) { // 数据已发送
+                // 重置标志位
                 c->bufpos = 0;
                 c->sentlen = 0;
             }
         } else {
-            o = listNodeValue(listFirst(c->reply));
+            o = listNodeValue(listFirst(c->reply)); // 从replay列表中获得
             objlen = o->used;
 
             if (objlen == 0) {
@@ -1004,13 +1012,13 @@ int writeToClient(int fd, client *c, int handler_installed) {
                 continue;
             }
 
-            nwritten = write(fd, o->buf + c->sentlen, objlen - c->sentlen);
+            nwritten = write(fd, o->buf + c->sentlen, objlen - c->sentlen); // 写入socket
             if (nwritten <= 0) break;
             c->sentlen += nwritten;
             totwritten += nwritten;
 
             /* If we fully sent the object on head go to the next one */
-            if (c->sentlen == objlen) {
+            if (c->sentlen == objlen) { // 发完了,删除队列
                 c->reply_bytes -= o->size;
                 listDelNode(c->reply,listFirst(c->reply));
                 c->sentlen = 0;
@@ -1055,12 +1063,12 @@ int writeToClient(int fd, client *c, int handler_installed) {
          * We just rely on data / pings received for timeout detection. */
         if (!(c->flags & CLIENT_MASTER)) c->lastinteraction = server.unixtime;
     }
-    if (!clientHasPendingReplies(c)) {
+    if (!clientHasPendingReplies(c)) { // 都发完了 则删除时间处理器
         c->sentlen = 0;
         if (handler_installed) aeDeleteFileEvent(server.el,c->fd,AE_WRITABLE);
 
         /* Close connection after entire reply has been sent. */
-        if (c->flags & CLIENT_CLOSE_AFTER_REPLY) {
+        if (c->flags & CLIENT_CLOSE_AFTER_REPLY) { // 关闭client链接
             freeClient(c);
             return C_ERR;
         }
@@ -1082,10 +1090,10 @@ void sendReplyToClient(aeEventLoop *el, int fd, void *privdata, int mask) {
 int handleClientsWithPendingWrites(void) {
     listIter li;
     listNode *ln;
-    int processed = listLength(server.clients_pending_write);
+    int processed = listLength(server.clients_pending_write); // 获取待处理列表长度
 
     listRewind(server.clients_pending_write,&li);
-    while((ln = listNext(&li))) {
+    while((ln = listNext(&li))) { // 循环处理
         client *c = listNodeValue(ln);
         c->flags &= ~CLIENT_PENDING_WRITE;
         listDelNode(server.clients_pending_write,ln);
@@ -1099,7 +1107,7 @@ int handleClientsWithPendingWrites(void) {
 
         /* If after the synchronous writes above we still have data to
          * output to the client, we need to install the writable handler. */
-        if (clientHasPendingReplies(c)) {
+        if (clientHasPendingReplies(c)) { // 未写入的数据
             int ae_flags = AE_WRITABLE;
             /* For the fsync=always policy, we want that a given FD is never
              * served for reading and writing in the same event loop iteration,
@@ -1112,7 +1120,7 @@ int handleClientsWithPendingWrites(void) {
                 ae_flags |= AE_BARRIER;
             }
             if (aeCreateFileEvent(server.el, c->fd, ae_flags,
-                sendReplyToClient, c) == AE_ERR) // 创建sendReplyToClient事件
+                sendReplyToClient, c) == AE_ERR) // 创建sendReplyToClient事件,等待执行
             {
                     freeClientAsync(c);
             }
@@ -1425,6 +1433,10 @@ int processMultibulkBuffer(client *c) {
  * more query buffer to process, because we read more data from the socket
  * or because a client was blocked and later reactivated, so there could be
  * pending query buffer, already representing a full command, to process. */
+/**
+ * 命令解析
+ * @param c
+ */
 void processInputBuffer(client *c) {
     server.current_client = c;
 
@@ -1471,7 +1483,7 @@ void processInputBuffer(client *c) {
             resetClient(c);
         } else {
             /* Only reset the client when the command was executed. */
-            if (processCommand(c) == C_OK) {
+            if (processCommand(c) == C_OK) { // 执行命令
                 if (c->flags & CLIENT_MASTER && !(c->flags & CLIENT_MULTI)) {
                     /* Update the applied replication offset of our master. */
                     c->reploff = c->read_reploff - sdslen(c->querybuf) + c->qb_pos;
@@ -1482,7 +1494,7 @@ void processInputBuffer(client *c) {
                  * still be able to access the client argv and argc field.
                  * The client will be reset in unblockClientFromModule(). */
                 if (!(c->flags & CLIENT_BLOCKED) || c->btype != BLOCKED_MODULE)
-                    resetClient(c);
+                    resetClient(c); // 重制client
             }
             /* freeMemoryIfNeeded may flush slave output buffers. This may
              * result into a slave, that may be the active client, to be
@@ -1505,9 +1517,9 @@ void processInputBuffer(client *c) {
  * is flagged as master. Usually you want to call this instead of the
  * raw processInputBuffer(). */
 void processInputBufferAndReplicate(client *c) {
-    if (!(c->flags & CLIENT_MASTER)) {
-        processInputBuffer(c);
-    } else {
+    if (!(c->flags & CLIENT_MASTER)) { // 非主client
+        processInputBuffer(c); // 命令解析
+    } else { // 主client master
         size_t prev_offset = c->reploff;
         processInputBuffer(c);
         size_t applied = c->reploff - prev_offset;
@@ -1518,7 +1530,13 @@ void processInputBufferAndReplicate(client *c) {
         }
     }
 }
-
+/**
+ * 当客户端发送命令时处理
+ * @param el
+ * @param fd
+ * @param privdata
+ * @param mask
+ */
 void readQueryFromClient(aeEventLoop *el, int fd, void *privdata, int mask) {
     client *c = (client*) privdata;
     int nread, readlen;
