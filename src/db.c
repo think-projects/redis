@@ -399,15 +399,25 @@ int dbDelete(redisDb *db, robj *key) {
  * At this point the caller is ready to modify the object, for example
  * using an sdscat() call to append some data, or anything else.
  */
+/**
+ * 解除key的共享
+ * @param db
+ * @param key
+ * @param o
+ * @return
+ */
 robj *dbUnshareStringValue(redisDb *db, robj *key, robj *o) {
     serverAssert(o->type == OBJ_STRING);
-    if (o->refcount != 1 || o->encoding != OBJ_ENCODING_RAW) {
+    if (o->refcount != 1 || o->encoding != OBJ_ENCODING_RAW) { // 值对象引用不是1 或者 值对象编码不是RAW
         robj *decoded = getDecodedObject(o);
-        o = createRawStringObject(decoded->ptr, sdslen(decoded->ptr));
-        decrRefCount(decoded);
-        dbOverwrite(db,key,o);
+        /*
+         * append 字符串 则编码为raw
+         */
+        o = createRawStringObject(decoded->ptr, sdslen(decoded->ptr)); // 创建新的sds 编码是raw
+        decrRefCount(decoded); // 引用减1
+        dbOverwrite(db,key,o); // 覆盖原来的值对象
     }
-    return o;
+    return o; // 返回新的值对象
 }
 
 /* Remove all keys from all the databases in a Redis server.
@@ -718,29 +728,35 @@ int parseScanCursorOrReply(client *c, robj *o, unsigned long *cursor) {
  *
  * In the case of a Hash object the function returns both the field and value
  * of every element on the Hash. */
+/**
+ * 迭代游标 响应元素分值
+ * @param c
+ * @param o 值对象
+ * @param cursor 游标
+ */
 void scanGenericCommand(client *c, robj *o, unsigned long cursor) {
     int i, j;
-    list *keys = listCreate();
+    list *keys = listCreate(); // 存放为过滤的key
     listNode *node, *nextnode;
-    long count = 10;
-    sds pat = NULL;
-    int patlen = 0, use_pattern = 0;
-    dict *ht;
+    long count = 10; // 默认条数10条
+    sds pat = NULL; // 匹配串
+    int patlen = 0, use_pattern = 0; // 匹配长度  是否统配
+    dict *ht; // 字典指针
 
     /* Object must be NULL (to iterate keys names), or the type of the object
      * must be Set, Sorted Set, or Hash. */
     serverAssert(o == NULL || o->type == OBJ_SET || o->type == OBJ_HASH ||
-                o->type == OBJ_ZSET);
+                o->type == OBJ_ZSET); // 值对象是空或者类型只能是set,hash,zset
 
     /* Set i to the first option argument. The previous one is the cursor. */
     i = (o == NULL) ? 2 : 3; /* Skip the key argument if needed. */
 
-    /* Step 1: Parse options. */
+    /* Step 1: Parse options. */ // 参数解析
     while (i < c->argc) {
-        j = c->argc - i;
-        if (!strcasecmp(c->argv[i]->ptr, "count") && j >= 2) {
+        j = c->argc - i; // 参数倒着获取
+        if (!strcasecmp(c->argv[i]->ptr, "count") && j >= 2) { // 参数是count
             if (getLongFromObjectOrReply(c, c->argv[i+1], &count, NULL)
-                != C_OK)
+                != C_OK) // 获取参数的值赋值给count
             {
                 goto cleanup;
             }
@@ -751,13 +767,13 @@ void scanGenericCommand(client *c, robj *o, unsigned long cursor) {
             }
 
             i += 2;
-        } else if (!strcasecmp(c->argv[i]->ptr, "match") && j >= 2) {
-            pat = c->argv[i+1]->ptr;
-            patlen = sdslen(pat);
+        } else if (!strcasecmp(c->argv[i]->ptr, "match") && j >= 2) { // 参数是macth
+            pat = c->argv[i+1]->ptr; // 获取匹配串
+            patlen = sdslen(pat); // 获取匹配串长度
 
             /* The pattern always matches if it is exactly "*", so it is
              * equivalent to disabling it. */
-            use_pattern = !(pat[0] == '*' && patlen == 1);
+            use_pattern = !(pat[0] == '*' && patlen == 1); // 是* 则非0
 
             i += 2;
         } else {
@@ -774,39 +790,39 @@ void scanGenericCommand(client *c, robj *o, unsigned long cursor) {
      * just return everything inside the object in a single call, setting the
      * cursor to zero to signal the end of the iteration. */
 
-    /* Handle the case of a hash table. */
+    /* Handle the case of a hash table. */ // 迭代遍历集合
     ht = NULL;
-    if (o == NULL) {
-        ht = c->db->dict;
-    } else if (o->type == OBJ_SET && o->encoding == OBJ_ENCODING_HT) {
-        ht = o->ptr;
-    } else if (o->type == OBJ_HASH && o->encoding == OBJ_ENCODING_HT) {
-        ht = o->ptr;
-        count *= 2; /* We return key / value for this type. */
-    } else if (o->type == OBJ_ZSET && o->encoding == OBJ_ENCODING_SKIPLIST) {
+    if (o == NULL) { // 值对象是空
+        ht = c->db->dict; // 指向db
+    } else if (o->type == OBJ_SET && o->encoding == OBJ_ENCODING_HT) { // 类型是set 编码是ht
+        ht = o->ptr; // 指向实际的set
+    } else if (o->type == OBJ_HASH && o->encoding == OBJ_ENCODING_HT) { // 类型是hash 编码是ht
+        ht = o->ptr; // 指向实际的hash
+        count *= 2; /* We return key / value for this type. */ // count扩一倍 kv
+    } else if (o->type == OBJ_ZSET && o->encoding == OBJ_ENCODING_SKIPLIST) { // 类型是zset 编码是skiplist dict
         zset *zs = o->ptr;
-        ht = zs->dict;
-        count *= 2; /* We return key / value for this type. */
+        ht = zs->dict; // 指向zset的dict
+        count *= 2; /* We return key / value for this type. */ // count扩一倍 kv
     }
 
-    if (ht) {
+    if (ht) { // 指向不是空 有值
         void *privdata[2];
         /* We set the max number of iterations to ten times the specified
          * COUNT, so if the hash table is in a pathological state (very
          * sparsely populated) we avoid to block too much time at the cost
          * of returning no or very few elements. */
-        long maxiterations = count*10;
+        long maxiterations = count*10; // 设置最大的迭代次数为count的10倍
 
         /* We pass two pointers to the callback: the list to which it will
          * add new elements, and the object containing the dictionary so that
          * it is possible to fetch more data in a type-dependent way. */
-        privdata[0] = keys;
-        privdata[1] = o;
-        do {
-            cursor = dictScan(ht, cursor, scanCallback, NULL, privdata);
+        privdata[0] = keys; // key
+        privdata[1] = o; // redisobj
+        do { // 迭代部分数据
+            cursor = dictScan(ht, cursor, scanCallback, NULL, privdata); // 获取数据 更新游标
         } while (cursor &&
               maxiterations-- &&
-              listLength(keys) < (unsigned long)count);
+              listLength(keys) < (unsigned long)count); // 有游标 并且不超过迭代次数 并且keys的长度小于count
     } else if (o->type == OBJ_SET) {
         int pos = 0;
         int64_t ll;
@@ -814,61 +830,61 @@ void scanGenericCommand(client *c, robj *o, unsigned long cursor) {
         while(intsetGet(o->ptr,pos++,&ll))
             listAddNodeTail(keys,createStringObjectFromLongLong(ll));
         cursor = 0;
-    } else if (o->type == OBJ_HASH || o->type == OBJ_ZSET) {
-        unsigned char *p = ziplistIndex(o->ptr,0);
+    } else if (o->type == OBJ_HASH || o->type == OBJ_ZSET) { // 迭代全部数据 编码是ziplist
+        unsigned char *p = ziplistIndex(o->ptr,0); // 获得第一个节点
         unsigned char *vstr;
         unsigned int vlen;
         long long vll;
 
-        while(p) {
-            ziplistGet(p,&vstr,&vlen,&vll);
+        while(p) { // 循环ziplist
+            ziplistGet(p,&vstr,&vlen,&vll); // 获得元素的值 vstr:string vll:long
             listAddNodeTail(keys,
                 (vstr != NULL) ? createStringObject((char*)vstr,vlen) :
-                                 createStringObjectFromLongLong(vll));
-            p = ziplistNext(o->ptr,p);
+                                 createStringObjectFromLongLong(vll)); // 添加到list中
+            p = ziplistNext(o->ptr,p); // 下一个
         }
         cursor = 0;
     } else {
         serverPanic("Not handled encoding in SCAN.");
     }
 
-    /* Step 3: Filter elements. */
-    node = listFirst(keys);
+    /* Step 3: Filter elements. */ // 过滤元素
+    node = listFirst(keys); // 取出第一个节点
     while (node) {
-        robj *kobj = listNodeValue(node);
-        nextnode = listNextNode(node);
+        robj *kobj = listNodeValue(node); // key的obj
+        nextnode = listNextNode(node); // 下一个节点
         int filter = 0;
 
         /* Filter element if it does not match the pattern. */
-        if (!filter && use_pattern) {
-            if (sdsEncodedObject(kobj)) {
+        if (!filter && use_pattern) { // 统配
+            if (sdsEncodedObject(kobj)) { // 是sds则比较字符串
                 if (!stringmatchlen(pat, patlen, kobj->ptr, sdslen(kobj->ptr), 0))
                     filter = 1;
-            } else {
+            } else { // 是整形
                 char buf[LONG_STR_SIZE];
                 int len;
 
                 serverAssert(kobj->encoding == OBJ_ENCODING_INT);
-                len = ll2string(buf,sizeof(buf),(long)kobj->ptr);
-                if (!stringmatchlen(pat, patlen, buf, len, 0)) filter = 1;
+                len = ll2string(buf,sizeof(buf),(long)kobj->ptr); // 转字符
+                if (!stringmatchlen(pat, patlen, buf, len, 0)) filter = 1; // 比较
             }
         }
 
         /* Filter element if it is an expired key. */
-        if (!filter && o == NULL && expireIfNeeded(c->db, kobj)) filter = 1;
+        if (!filter && o == NULL && expireIfNeeded(c->db, kobj)) filter = 1; // 惰性删除
 
         /* Remove the element and its associted value if needed. */
         if (filter) {
-            decrRefCount(kobj);
-            listDelNode(keys, node);
+            decrRefCount(kobj); // 引用减1
+            listDelNode(keys, node); // 从keys中删除节点
         }
 
         /* If this is a hash or a sorted set, we have a flat list of
          * key-value elements, so if this element was filtered, remove the
          * value, or skip it if it was not filtered: we only match keys. */
-        if (o && (o->type == OBJ_ZSET || o->type == OBJ_HASH)) {
+        if (o && (o->type == OBJ_ZSET || o->type == OBJ_HASH)) { // 类型是zset或者hash 删除值
             node = nextnode;
-            nextnode = listNextNode(node);
+            nextnode = listNextNode(node); // 值
             if (filter) {
                 kobj = listNodeValue(node);
                 decrRefCount(kobj);
@@ -879,13 +895,14 @@ void scanGenericCommand(client *c, robj *o, unsigned long cursor) {
     }
 
     /* Step 4: Reply to the client. */
-    addReplyMultiBulkLen(c, 2);
-    addReplyBulkLongLong(c,cursor);
+    addReplyMultiBulkLen(c, 2); // 响应数
+    addReplyBulkLongLong(c,cursor); // 响应游标
 
-    addReplyMultiBulkLen(c, listLength(keys));
+    addReplyMultiBulkLen(c, listLength(keys)); // 响应key的长度
+    // 整理keys
     while ((node = listFirst(keys)) != NULL) {
         robj *kobj = listNodeValue(node);
-        addReplyBulk(c, kobj);
+        addReplyBulk(c, kobj); // 响应
         decrRefCount(kobj);
         listDelNode(keys, node);
     }

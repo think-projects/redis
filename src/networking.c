@@ -82,21 +82,25 @@ void linkClient(client *c) {
     uint64_t id = htonu64(c->id);
     raxInsert(server.clients_index,(unsigned char*)&id,sizeof(id),c,NULL);
 }
-
+/**
+ * 创建client
+ * @param fd 连接socket的fd
+ * @return
+ */
 client *createClient(int fd) {
-    client *c = zmalloc(sizeof(client));
+    client *c = zmalloc(sizeof(client)); // 申请内存
 
     /* passing -1 as fd it is possible to create a non connected client.
      * This is useful since all the commands needs to be executed
      * in the context of a client. When commands are executed in other
      * contexts (for instance a Lua script) we need a non connected client. */
-    if (fd != -1) {
-        anetNonBlock(NULL,fd);
-        anetEnableTcpNoDelay(NULL,fd);
+    if (fd != -1) { // fd有效 不是伪客户端
+        anetNonBlock(NULL,fd); // fd设为非阻塞
+        anetEnableTcpNoDelay(NULL,fd); // tcp设为非延迟
         if (server.tcpkeepalive)
             anetKeepAlive(NULL,fd,server.tcpkeepalive);
         if (aeCreateFileEvent(server.el,fd,AE_READABLE,
-            readQueryFromClient, c) == AE_ERR)
+            readQueryFromClient, c) == AE_ERR) // 创建文件事件,绑定读事件到el,设置回调函数为readQueryFromClient
         {
             close(fd);
             zfree(c);
@@ -104,9 +108,10 @@ client *createClient(int fd) {
         }
     }
 
-    selectDb(c,0);
+    selectDb(c,0); // 选择当前链接的db为0
     uint64_t client_id;
-    atomicGetIncr(server.next_client_id,client_id,1);
+    atomicGetIncr(server.next_client_id,client_id,1); // clientid加1
+    // 初始化client的属性
     c->id = client_id;
     c->fd = fd;
     c->name = NULL;
@@ -156,8 +161,8 @@ client *createClient(int fd) {
     c->client_list_node = NULL;
     listSetFreeMethod(c->pubsub_patterns,decrRefCountVoid);
     listSetMatchMethod(c->pubsub_patterns,listMatchObjects);
-    if (fd != -1) linkClient(c);
-    initClientMultiState(c);
+    if (fd != -1) linkClient(c); // client不是伪客户端 将client天骄到server的client链表
+    initClientMultiState(c); // 初始化事务状态
     return c;
 }
 
@@ -515,14 +520,18 @@ void addReplyLongLongWithPrefix(client *c, long long ll, char prefix) {
     buf[len+2] = '\n';
     addReplyString(c,buf,len+3);
 }
-
+/**
+ * 响应长度
+ * @param c
+ * @param ll
+ */
 void addReplyLongLong(client *c, long long ll) {
     if (ll == 0)
-        addReply(c,shared.czero);
+        addReply(c,shared.czero); // 响应0
     else if (ll == 1)
-        addReply(c,shared.cone);
+        addReply(c,shared.cone); // 响应1
     else
-        addReplyLongLongWithPrefix(c,ll,':');
+        addReplyLongLongWithPrefix(c,ll,':'); // 响应:数
 }
 
 void addReplyMultiBulkLen(client *c, long length) {
@@ -661,28 +670,35 @@ int clientHasPendingReplies(client *c) {
 }
 
 #define MAX_ACCEPTS_PER_CALL 1000
+/**
+ * 创建client
+ * @param fd
+ * @param flags
+ * @param ip
+ */
 static void acceptCommonHandler(int fd, int flags, char *ip) {
     client *c;
-    if ((c = createClient(fd)) == NULL) {
+    if ((c = createClient(fd)) == NULL) { // 创建client
         serverLog(LL_WARNING,
             "Error registering fd event for the new client: %s (fd=%d)",
             strerror(errno),fd);
         close(fd); /* May be already closed, just ignore errors */
         return;
     }
+    // 创建成功
     /* If maxclient directive is set and this is one client more... close the
      * connection. Note that we create the client instead to check before
      * for this condition, since now the socket is already set in non-blocking
      * mode and we can send an error for free using the Kernel I/O */
-    if (listLength(server.clients) > server.maxclients) {
+    if (listLength(server.clients) > server.maxclients) { // server的client数大于最大client数
         char *err = "-ERR max number of clients reached\r\n";
 
         /* That's a best effort error message, don't check write errors */
         if (write(c->fd,err,strlen(err)) == -1) {
             /* Nothing to do, Just to avoid the warning... */
         }
-        server.stat_rejected_conn++;
-        freeClient(c);
+        server.stat_rejected_conn++; // 拒绝连接数+1
+        freeClient(c); // 释放当前client
         return;
     }
 
@@ -695,8 +711,8 @@ static void acceptCommonHandler(int fd, int flags, char *ip) {
         server.requirepass == NULL &&
         !(flags & CLIENT_UNIX_SOCKET) &&
         ip != NULL)
-    {
-        if (strcmp(ip,"127.0.0.1") && strcmp(ip,"::1")) {
+    { // 服务器是保护并且没有绑定ip并且没有密码
+        if (strcmp(ip,"127.0.0.1") && strcmp(ip,"::1")) { // client的ip是本机 拒绝本地连接
             char *err =
                 "-DENIED Redis is running in protected mode because protected "
                 "mode is enabled, no bind address was specified, no "
@@ -721,33 +737,40 @@ static void acceptCommonHandler(int fd, int flags, char *ip) {
             if (write(c->fd,err,strlen(err)) == -1) {
                 /* Nothing to do, Just to avoid the warning... */
             }
-            server.stat_rejected_conn++;
-            freeClient(c);
+            server.stat_rejected_conn++; // 拒绝连接数+1
+            freeClient(c); // 释放当前client
             return;
         }
     }
 
-    server.stat_numconnections++;
-    c->flags |= flags;
+    server.stat_numconnections++; // 连接数+1
+    c->flags |= flags; // 更新标志
 }
-
+/**
+ * 链接应答回调函数
+ * @param el 事件循环
+ * @param fd socket的fd
+ * @param privdata 私有数据
+ * @param mask 标志
+ */
 void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
-    int cport, cfd, max = MAX_ACCEPTS_PER_CALL;
-    char cip[NET_IP_STR_LEN];
+    int cport, cfd, max = MAX_ACCEPTS_PER_CALL; // cport:client的端口 max:一次处理1000个连接
+    char cip[NET_IP_STR_LEN]; // client的ip
+    // 参数不使用,为了个其他的回调函数兼容,与声明保持一致
     UNUSED(el);
     UNUSED(mask);
     UNUSED(privdata);
 
-    while(max--) {
-        cfd = anetTcpAccept(server.neterr, fd, cip, sizeof(cip), &cport);
-        if (cfd == ANET_ERR) {
+    while(max--) { // 循环
+        cfd = anetTcpAccept(server.neterr, fd, cip, sizeof(cip), &cport); // 接收连接
+        if (cfd == ANET_ERR) { // 链接是吧 fd=-1
             if (errno != EWOULDBLOCK)
                 serverLog(LL_WARNING,
                     "Accepting client connection: %s", server.neterr);
             return;
         }
         serverLog(LL_VERBOSE,"Accepted %s:%d", cip, cport);
-        acceptCommonHandler(cfd,0,cip);
+        acceptCommonHandler(cfd,0,cip); // 链接成功 创建client
     }
 }
 
@@ -791,19 +814,24 @@ void disconnectSlaves(void) {
 /* Remove the specified client from global lists where the client could
  * be referenced, not including the Pub/Sub channels.
  * This is used by freeClient() and replicationCacheMaster(). */
+/**
+ * 打断链接
+ * @param c
+ */
 void unlinkClient(client *c) {
     listNode *ln;
 
     /* If this is marked as current client unset it. */
-    if (server.current_client == c) server.current_client = NULL;
+    if (server.current_client == c) server.current_client = NULL; // 是当前链接client则清空当前client
 
     /* Certain operations must be done only if the client has an active socket.
      * If the client was already unlinked or if it's a "fake client" the
      * fd is already set to -1. */
-    if (c->fd != -1) {
+    if (c->fd != -1) { // 不是伪客户端
         /* Remove from the list of active clients. */
-        if (c->client_list_node) {
+        if (c->client_list_node) { // client列表
             uint64_t id = htonu64(c->id);
+            // 移除client节点
             raxRemove(server.clients_index,(unsigned char*)&id,sizeof(id),NULL);
             listDelNode(server.clients,c->client_list_node);
             c->client_list_node = NULL;
@@ -819,38 +847,41 @@ void unlinkClient(client *c) {
             shutdown(c->fd, SHUT_RDWR);
         }
 
-        /* Unregister async I/O handlers and close the socket. */
+        /* Unregister async I/O handlers and close the socket. */ // 从可读和可写文件事件中删除对该client的fd的监听
         aeDeleteFileEvent(server.el,c->fd,AE_READABLE);
         aeDeleteFileEvent(server.el,c->fd,AE_WRITABLE);
-        close(c->fd);
+        close(c->fd); // 关闭socket
         c->fd = -1;
     }
 
     /* Remove from the list of pending writes if needed. */
-    if (c->flags & CLIENT_PENDING_WRITE) {
-        ln = listSearchKey(server.clients_pending_write,c);
+    if (c->flags & CLIENT_PENDING_WRITE) { // 是待写队列
+        ln = listSearchKey(server.clients_pending_write,c); // 找到client节点
         serverAssert(ln != NULL);
-        listDelNode(server.clients_pending_write,ln);
-        c->flags &= ~CLIENT_PENDING_WRITE;
+        listDelNode(server.clients_pending_write,ln); // 从代写队列中删除节点
+        c->flags &= ~CLIENT_PENDING_WRITE; // 取消标志
     }
 
     /* When client was just unblocked because of a blocking operation,
      * remove it from the list of unblocked clients. */
-    if (c->flags & CLIENT_UNBLOCKED) {
-        ln = listSearchKey(server.unblocked_clients,c);
+    if (c->flags & CLIENT_UNBLOCKED) { // client是非阻塞
+        ln = listSearchKey(server.unblocked_clients,c); // 从非阻塞队列中找到client节点
         serverAssert(ln != NULL);
-        listDelNode(server.unblocked_clients,ln);
+        listDelNode(server.unblocked_clients,ln); // 删除节点
         c->flags &= ~CLIENT_UNBLOCKED;
     }
 }
-
+/**
+ * 释放client
+ * @param c
+ */
 void freeClient(client *c) {
     listNode *ln;
 
     /* If a client is protected, yet we need to free it right now, make sure
      * to at least use asynchronous freeing. */
-    if (c->flags & CLIENT_PROTECTED) {
-        freeClientAsync(c);
+    if (c->flags & CLIENT_PROTECTED) { // 被保护的client
+        freeClientAsync(c); // 异步释放
         return;
     }
 
@@ -859,89 +890,89 @@ void freeClient(client *c) {
      *
      * Note that before doing this we make sure that the client is not in
      * some unexpected state, by checking its flags. */
-    if (server.master && c->flags & CLIENT_MASTER) {
+    if (server.master && c->flags & CLIENT_MASTER) { // 主机并且是主client
         serverLog(LL_WARNING,"Connection with master lost.");
         if (!(c->flags & (CLIENT_CLOSE_AFTER_REPLY|
                           CLIENT_CLOSE_ASAP|
                           CLIENT_BLOCKED)))
         {
-            replicationCacheMaster(c);
+            replicationCacheMaster(c); // 复制主机缓存 为了做同步
             return;
         }
     }
 
     /* Log link disconnection with slave */
-    if ((c->flags & CLIENT_SLAVE) && !(c->flags & CLIENT_MONITOR)) {
+    if ((c->flags & CLIENT_SLAVE) && !(c->flags & CLIENT_MONITOR)) { // 从机client 并且不是监视器
         serverLog(LL_WARNING,"Connection with replica %s lost.",
-            replicationGetSlaveName(c));
+            replicationGetSlaveName(c)); // 复制从机名
     }
 
-    /* Free the query buffer */
+    /* Free the query buffer */ // 释放输入缓冲区
     sdsfree(c->querybuf);
     sdsfree(c->pending_querybuf);
     c->querybuf = NULL;
 
     /* Deallocate structures used to block on blocking ops. */
-    if (c->flags & CLIENT_BLOCKED) unblockClient(c);
-    dictRelease(c->bpop.keys);
+    if (c->flags & CLIENT_BLOCKED) unblockClient(c); // 是阻塞 则解开阻塞
+    dictRelease(c->bpop.keys); // 释放阻塞key的字典空间
 
-    /* UNWATCH all the keys */
+    /* UNWATCH all the keys */ // 清空watchkey
     unwatchAllKeys(c);
     listRelease(c->watched_keys);
 
     /* Unsubscribe from all the pubsub channels */
-    pubsubUnsubscribeAllChannels(c,0);
-    pubsubUnsubscribeAllPatterns(c,0);
+    pubsubUnsubscribeAllChannels(c,0); // 退订频道
+    pubsubUnsubscribeAllPatterns(c,0); // 退订模式
     dictRelease(c->pubsub_channels);
     listRelease(c->pubsub_patterns);
 
     /* Free data structures. */
-    listRelease(c->reply);
-    freeClientArgv(c);
+    listRelease(c->reply); // 释放应答
+    freeClientArgv(c); // 清空客户端参数
 
     /* Unlink the client: this will close the socket, remove the I/O
      * handlers, and remove references of the client from different
      * places where active clients may be referenced. */
-    unlinkClient(c);
+    unlinkClient(c); // 打断链接和移除引用
 
     /* Master/slave cleanup Case 1:
      * we lost the connection with a slave. */
-    if (c->flags & CLIENT_SLAVE) {
-        if (c->replstate == SLAVE_STATE_SEND_BULK) {
-            if (c->repldbfd != -1) close(c->repldbfd);
+    if (c->flags & CLIENT_SLAVE) { // 从机client 断开连接
+        if (c->replstate == SLAVE_STATE_SEND_BULK) { // 发送rdb 主从复制
+            if (c->repldbfd != -1) close(c->repldbfd); // 释放rdb
             if (c->replpreamble) sdsfree(c->replpreamble);
         }
-        list *l = (c->flags & CLIENT_MONITOR) ? server.monitors : server.slaves;
-        ln = listSearchKey(l,c);
+        list *l = (c->flags & CLIENT_MONITOR) ? server.monitors : server.slaves; // 监视主从链表
+        ln = listSearchKey(l,c); // 取出client节点
         serverAssert(ln != NULL);
-        listDelNode(l,ln);
+        listDelNode(l,ln); // 删除client节点
         /* We need to remember the time when we started to have zero
          * attached slaves, as after some time we'll free the replication
          * backlog. */
-        if (getClientType(c) == CLIENT_TYPE_SLAVE && listLength(server.slaves) == 0)
-            server.repl_no_slaves_since = server.unixtime;
-        refreshGoodSlavesCount();
+        if (getClientType(c) == CLIENT_TYPE_SLAVE && listLength(server.slaves) == 0) // 从节点链表为空
+            server.repl_no_slaves_since = server.unixtime; // 更不做主从复制时间
+        refreshGoodSlavesCount(); // 更新存活的slave数目
     }
 
     /* Master/slave cleanup Case 2:
      * we lost the connection with the master. */
-    if (c->flags & CLIENT_MASTER) replicationHandleMasterDisconnection();
+    if (c->flags & CLIENT_MASTER) replicationHandleMasterDisconnection(); // 主client 断开连接
 
     /* If this client was scheduled for async freeing we need to remove it
      * from the queue. */
-    if (c->flags & CLIENT_CLOSE_ASAP) {
-        ln = listSearchKey(server.clients_to_close,c);
+    if (c->flags & CLIENT_CLOSE_ASAP) { // 要关闭
+        ln = listSearchKey(server.clients_to_close,c); // 在要关闭链接链表中找到client
         serverAssert(ln != NULL);
-        listDelNode(server.clients_to_close,ln);
+        listDelNode(server.clients_to_close,ln); // 删除client
     }
 
     /* Release other dynamically allocated client structure fields,
      * and finally release the client structure itself. */
-    if (c->name) decrRefCount(c->name);
-    zfree(c->argv);
-    freeClientMultiState(c);
+    if (c->name) decrRefCount(c->name); // 减少名字引用
+    zfree(c->argv); // 释放client参数列表
+    freeClientMultiState(c); // 释放事务状态
     sdsfree(c->peerid);
-    zfree(c);
+    zfree(c); // 释放client结构
 }
 
 /* Schedule a client to free it at a safe time in the serverCron() function.
@@ -955,13 +986,13 @@ void freeClientAsync(client *c) {
 }
 
 void freeClientsInAsyncFreeQueue(void) {
-    while (listLength(server.clients_to_close)) {
+    while (listLength(server.clients_to_close)) { // 要关闭的client列表
         listNode *ln = listFirst(server.clients_to_close);
         client *c = listNodeValue(ln);
 
         c->flags &= ~CLIENT_CLOSE_ASAP;
-        freeClient(c);
-        listDelNode(server.clients_to_close,ln);
+        freeClient(c); // 释放client
+        listDelNode(server.clients_to_close,ln); // 要关闭列表中删除节点
     }
 }
 
@@ -977,9 +1008,10 @@ client *lookupClientByID(uint64_t id) {
 /* Write data in output buffers to client. Return C_OK if the client
  * is still valid after the call, C_ERR if it was freed. */
 /**
+ * 数据写入client
  * 将输出缓冲区的数据写入socket
- * @param fd
- * @param c
+ * @param fd 要写入的fd
+ * @param c client
  * @param handler_installed
  * @return
  */
@@ -988,12 +1020,12 @@ int writeToClient(int fd, client *c, int handler_installed) {
     size_t objlen;
     clientReplyBlock *o;
 
-    while(clientHasPendingReplies(c)) { // 有未写入的数据
+    while(clientHasPendingReplies(c)) { // 有未写入的数据 输出缓冲区有数据
         if (c->bufpos > 0) { // 输出缓冲区有数据
             nwritten = write(fd,c->buf+c->sentlen,c->bufpos-c->sentlen); // 写入到fd的socket
-            if (nwritten <= 0) break;
-            c->sentlen += nwritten;
-            totwritten += nwritten;
+            if (nwritten <= 0) break; // 写入失败则跳出循环
+            c->sentlen += nwritten; // 发送长度
+            totwritten += nwritten; // 写入长度
 
             /* If the buffer was sent, set bufpos to zero to continue with
              * the remainder of the reply. */
@@ -1002,25 +1034,26 @@ int writeToClient(int fd, client *c, int handler_installed) {
                 c->bufpos = 0;
                 c->sentlen = 0;
             }
-        } else {
+        } else { // replay列表有数据
             o = listNodeValue(listFirst(c->reply)); // 从replay列表中获得
-            objlen = o->used;
+            objlen = o->used; // 获得对象长度
 
-            if (objlen == 0) {
+            if (objlen == 0) { // 对象是空
                 c->reply_bytes -= o->size;
-                listDelNode(c->reply,listFirst(c->reply));
-                continue;
+                listDelNode(c->reply,listFirst(c->reply)); // 删除节点
+                continue; // 找下一个
             }
 
             nwritten = write(fd, o->buf + c->sentlen, objlen - c->sentlen); // 写入socket
-            if (nwritten <= 0) break;
+            if (nwritten <= 0) break; // 写入失败则跳出循环
+            // 更新计数器
             c->sentlen += nwritten;
             totwritten += nwritten;
 
             /* If we fully sent the object on head go to the next one */
             if (c->sentlen == objlen) { // 发完了,删除队列
-                c->reply_bytes -= o->size;
-                listDelNode(c->reply,listFirst(c->reply));
+                c->reply_bytes -= o->size; // 回复数据大小等于回复数据大小减去发送的
+                listDelNode(c->reply,listFirst(c->reply)); // 删除节点
                 c->sentlen = 0;
                 /* If there are no longer objects in the list, we expect
                  * the count of reply bytes to be exactly zero. */
@@ -1043,33 +1076,33 @@ int writeToClient(int fd, client *c, int handler_installed) {
         if (totwritten > NET_MAX_WRITES_PER_EVENT &&
             (server.maxmemory == 0 ||
              zmalloc_used_memory() < server.maxmemory) &&
-            !(c->flags & CLIENT_SLAVE)) break;
+            !(c->flags & CLIENT_SLAVE)) break; // 写入数大于最大写入 或者 内存不存 跳出循环
     }
-    server.stat_net_output_bytes += totwritten;
-    if (nwritten == -1) {
+    server.stat_net_output_bytes += totwritten; // 网络输入数等于网络输入数+要写入数
+    if (nwritten == -1) { // 写入失败
         if (errno == EAGAIN) {
             nwritten = 0;
         } else {
             serverLog(LL_VERBOSE,
                 "Error writing to client: %s", strerror(errno));
-            freeClient(c);
+            freeClient(c); // 释放client
             return C_ERR;
         }
     }
-    if (totwritten > 0) {
+    if (totwritten > 0) { // 写入成功
         /* For clients representing masters we don't count sending data
          * as an interaction, since we always send REPLCONF ACK commands
          * that take some time to just fill the socket output buffer.
          * We just rely on data / pings received for timeout detection. */
-        if (!(c->flags & CLIENT_MASTER)) c->lastinteraction = server.unixtime;
+        if (!(c->flags & CLIENT_MASTER)) c->lastinteraction = server.unixtime; // 不是主client 则更新交互时间
     }
     if (!clientHasPendingReplies(c)) { // 都发完了 则删除时间处理器
         c->sentlen = 0;
-        if (handler_installed) aeDeleteFileEvent(server.el,c->fd,AE_WRITABLE);
+        if (handler_installed) aeDeleteFileEvent(server.el,c->fd,AE_WRITABLE); // 函数有效 删除fd上的可写事件监听
 
         /* Close connection after entire reply has been sent. */
         if (c->flags & CLIENT_CLOSE_AFTER_REPLY) { // 关闭client链接
-            freeClient(c);
+            freeClient(c); // 释放client
             return C_ERR;
         }
     }
@@ -1523,7 +1556,7 @@ void processInputBufferAndReplicate(client *c) {
         size_t prev_offset = c->reploff;
         processInputBuffer(c);
         size_t applied = c->reploff - prev_offset;
-        if (applied) {
+        if (applied) { // 传播到从机
             replicationFeedSlavesFromMasterStream(server.slaves,
                     c->pending_querybuf, applied);
             sdsrange(c->pending_querybuf,applied,-1);
@@ -1532,19 +1565,20 @@ void processInputBufferAndReplicate(client *c) {
 }
 /**
  * 当客户端发送命令时处理
- * @param el
- * @param fd
- * @param privdata
- * @param mask
+ * 命令接收,读取客户端的查询缓冲区内容
+ * @param el 事件循环
+ * @param fd socket的fd
+ * @param privdata 客户端数据
+ * @param mask 标识
  */
 void readQueryFromClient(aeEventLoop *el, int fd, void *privdata, int mask) {
-    client *c = (client*) privdata;
+    client *c = (client*) privdata; // 获得client数据
     int nread, readlen;
     size_t qblen;
     UNUSED(el);
     UNUSED(mask);
 
-    readlen = PROTO_IOBUF_LEN;
+    readlen = PROTO_IOBUF_LEN; // 读取长度 16k
     /* If this is a multi bulk request, and we are processing a bulk reply
      * that is large enough, try to maximize the probability that the query
      * buffer contains exactly the SDS string representing the object, even
@@ -1552,51 +1586,51 @@ void readQueryFromClient(aeEventLoop *el, int fd, void *privdata, int mask) {
      * processMultiBulkBuffer() can avoid copying buffers to create the
      * Redis Object representing the argument. */
     if (c->reqtype == PROTO_REQ_MULTIBULK && c->multibulklen && c->bulklen != -1
-        && c->bulklen >= PROTO_MBULK_BIG_ARG)
+        && c->bulklen >= PROTO_MBULK_BIG_ARG) // 多条请求
     {
-        ssize_t remaining = (size_t)(c->bulklen+2)-sdslen(c->querybuf);
+        ssize_t remaining = (size_t)(c->bulklen+2)-sdslen(c->querybuf); // 根据读入长度设置
 
         /* Note that the 'remaining' variable may be zero in some edge case,
          * for example once we resume a blocked client after CLIENT PAUSE. */
         if (remaining > 0 && remaining < readlen) readlen = remaining;
     }
 
-    qblen = sdslen(c->querybuf);
-    if (c->querybuf_peak < qblen) c->querybuf_peak = qblen;
-    c->querybuf = sdsMakeRoomFor(c->querybuf, readlen);
-    nread = read(fd, c->querybuf+qblen, readlen);
-    if (nread == -1) {
+    qblen = sdslen(c->querybuf); // 输入缓冲区长度
+    if (c->querybuf_peak < qblen) c->querybuf_peak = qblen; // 读入峰值小于输入缓冲区长度 则 峰值等于输入缓冲区长度
+    c->querybuf = sdsMakeRoomFor(c->querybuf, readlen); // 输入缓冲区扩容readlen
+    nread = read(fd, c->querybuf+qblen, readlen); // 从socket中读取数据
+    if (nread == -1) { // 读取错误
         if (errno == EAGAIN) {
             return;
-        } else {
+        } else { // 释放client
             serverLog(LL_VERBOSE, "Reading from client: %s",strerror(errno));
             freeClient(c);
             return;
         }
-    } else if (nread == 0) {
+    } else if (nread == 0) { // 正常读取 读完了
         serverLog(LL_VERBOSE, "Client closed connection");
-        freeClient(c);
+        freeClient(c); // 释放client
         return;
-    } else if (c->flags & CLIENT_MASTER) {
+    } else if (c->flags & CLIENT_MASTER) { // 正在读 主client
         /* Append the query buffer to the pending (not applied) buffer
          * of the master. We'll use this buffer later in order to have a
          * copy of the string applied by the last command executed. */
         c->pending_querybuf = sdscatlen(c->pending_querybuf,
-                                        c->querybuf+qblen,nread);
+                                        c->querybuf+qblen,nread); // 串链接
     }
 
-    sdsIncrLen(c->querybuf,nread);
-    c->lastinteraction = server.unixtime;
-    if (c->flags & CLIENT_MASTER) c->read_reploff += nread;
-    server.stat_net_input_bytes += nread;
-    if (sdslen(c->querybuf) > server.client_max_querybuf_len) {
-        sds ci = catClientInfoString(sdsempty(),c), bytes = sdsempty();
+    sdsIncrLen(c->querybuf,nread); // 增加querybuf的已用和未用大小
+    c->lastinteraction = server.unixtime; // 更新交互时间
+    if (c->flags & CLIENT_MASTER) c->read_reploff += nread; // 主client更新复制偏移量
+    server.stat_net_input_bytes += nread; // 增加收入字节数
+    if (sdslen(c->querybuf) > server.client_max_querybuf_len) { // 输入缓冲区大小大于最大值
+        sds ci = catClientInfoString(sdsempty(),c), bytes = sdsempty(); //清空输入缓冲区
 
         bytes = sdscatrepr(bytes,c->querybuf,64);
         serverLog(LL_WARNING,"Closing client that reached max query buffer length: %s (qbuf initial bytes: %s)", ci, bytes);
         sdsfree(ci);
         sdsfree(bytes);
-        freeClient(c);
+        freeClient(c); // 释放client
         return;
     }
 
@@ -1606,7 +1640,7 @@ void readQueryFromClient(aeEventLoop *el, int fd, void *privdata, int mask) {
      * was actually applied to the master state: this quantity, and its
      * corresponding part of the replication stream, will be propagated to
      * the sub-slaves and to the replication backlog. */
-    processInputBufferAndReplicate(c);
+    processInputBufferAndReplicate(c); // 解析命令和传播命令
 }
 
 void getClientsMaxBuffers(unsigned long *longest_output_list,

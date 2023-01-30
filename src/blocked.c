@@ -140,6 +140,7 @@ void processUnblockedClients(void) {
          * client is not blocked before to proceed, but things may change and
          * the code is conceptually more correct this way. */
         if (!(c->flags & CLIENT_BLOCKED)) {
+            // 输入缓冲区处理
             if (c->querybuf && sdslen(c->querybuf) > 0) {
                 processInputBufferAndReplicate(c);
             }

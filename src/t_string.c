@@ -35,7 +35,7 @@
  *----------------------------------------------------------------------------*/
 
 static int checkStringLength(client *c, long long size) {
-    if (size > 512*1024*1024) {
+    if (size > 512*1024*1024) { // size > 512M
         addReplyError(c,"string exceeds maximum allowed size (512MB)");
         return C_ERR;
     }
@@ -193,21 +193,27 @@ int getGenericCommand(client *c) {
 void getCommand(client *c) {
     getGenericCommand(c);
 }
-
+/**
+ * getset key value
+ * @param c
+ */
 void getsetCommand(client *c) {
-    if (getGenericCommand(c) == C_ERR) return;
-    c->argv[2] = tryObjectEncoding(c->argv[2]);
-    setKey(c->db,c->argv[1],c->argv[2]);
-    notifyKeyspaceEvent(NOTIFY_STRING,"set",c->argv[1],c->db->id);
-    server.dirty++;
+    if (getGenericCommand(c) == C_ERR) return; // 响应值对象错误 返回
+    c->argv[2] = tryObjectEncoding(c->argv[2]); // 将value转为值对象
+    setKey(c->db,c->argv[1],c->argv[2]); // 设置key的值对象
+    notifyKeyspaceEvent(NOTIFY_STRING,"set",c->argv[1],c->db->id); // 键空间通知
+    server.dirty++; // 更新计数
 }
-
+/**
+ * setrange key offset value
+ * @param c
+ */
 void setrangeCommand(client *c) {
     robj *o;
     long offset;
-    sds value = c->argv[3]->ptr;
+    sds value = c->argv[3]->ptr; // 获得vlaue
 
-    if (getLongFromObjectOrReply(c,c->argv[2],&offset,NULL) != C_OK)
+    if (getLongFromObjectOrReply(c,c->argv[2],&offset,NULL) != C_OK) // 获得offset参数,获得参数的值
         return;
 
     if (offset < 0) {
@@ -215,90 +221,93 @@ void setrangeCommand(client *c) {
         return;
     }
 
-    o = lookupKeyWrite(c->db,c->argv[1]);
-    if (o == NULL) {
+    o = lookupKeyWrite(c->db,c->argv[1]); // 获得key对应的值对象
+    if (o == NULL) { // 值对象为空 kv不存在
         /* Return 0 when setting nothing on a non-existing string */
-        if (sdslen(value) == 0) {
-            addReply(c,shared.czero);
+        if (sdslen(value) == 0) { // value是空
+            addReply(c,shared.czero); // 响应0
             return;
         }
 
         /* Return when the resulting string exceeds allowed size */
-        if (checkStringLength(c,offset+sdslen(value)) != C_OK)
+        if (checkStringLength(c,offset+sdslen(value)) != C_OK) // value长度+offset>512M
             return;
 
-        o = createObject(OBJ_STRING,sdsnewlen(NULL, offset+sdslen(value)));
-        dbAdd(c->db,c->argv[1],o);
-    } else {
+        o = createObject(OBJ_STRING,sdsnewlen(NULL, offset+sdslen(value))); // 创建空对象
+        dbAdd(c->db,c->argv[1],o); // kv添加到db中
+    } else { // 值对象存在
         size_t olen;
 
         /* Key exists, check type */
-        if (checkType(c,o,OBJ_STRING))
+        if (checkType(c,o,OBJ_STRING)) // 值对象类型不是字符串
             return;
 
         /* Return existing string length when setting nothing */
-        olen = stringObjectLen(o);
-        if (sdslen(value) == 0) {
-            addReplyLongLong(c,olen);
+        olen = stringObjectLen(o); // 获得值对象的字符串长度
+        if (sdslen(value) == 0) { // value是空
+            addReplyLongLong(c,olen); // 返回原字符串长度
             return;
         }
 
         /* Return when the resulting string exceeds allowed size */
-        if (checkStringLength(c,offset+sdslen(value)) != C_OK)
+        if (checkStringLength(c,offset+sdslen(value)) != C_OK) // value长度+offset>512M
             return;
 
         /* Create a copy when the object is shared or encoded. */
-        o = dbUnshareStringValue(c->db,c->argv[1],o);
+        o = dbUnshareStringValue(c->db,c->argv[1],o); // 解除key的共享
     }
 
-    if (sdslen(value) > 0) {
-        o->ptr = sdsgrowzero(o->ptr,offset+sdslen(value));
-        memcpy((char*)o->ptr+offset,value,sdslen(value));
+    if (sdslen(value) > 0) { // value不是空
+        o->ptr = sdsgrowzero(o->ptr,offset+sdslen(value)); // 扩容或返回原来的sds
+        memcpy((char*)o->ptr+offset,value,sdslen(value)); // 将value拷贝到字符串的offset位 覆盖value的长度
         signalModifiedKey(c->db,c->argv[1]);
         notifyKeyspaceEvent(NOTIFY_STRING,
             "setrange",c->argv[1],c->db->id);
         server.dirty++;
     }
-    addReplyLongLong(c,sdslen(o->ptr));
+    addReplyLongLong(c,sdslen(o->ptr)); // 响应新的sds长度
 }
-
+/**
+ * getrange key start, end
+ * @param c
+ */
 void getrangeCommand(client *c) {
     robj *o;
     long long start, end;
     char *str, llbuf[32];
     size_t strlen;
 
-    if (getLongLongFromObjectOrReply(c,c->argv[2],&start,NULL) != C_OK)
+    if (getLongLongFromObjectOrReply(c,c->argv[2],&start,NULL) != C_OK) // 获得start参数 如果不是整数 则返回
         return;
-    if (getLongLongFromObjectOrReply(c,c->argv[3],&end,NULL) != C_OK)
+    if (getLongLongFromObjectOrReply(c,c->argv[3],&end,NULL) != C_OK) // 获得end参数 如果不是整数 则返回
         return;
     if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.emptybulk)) == NULL ||
-        checkType(c,o,OBJ_STRING)) return;
+        checkType(c,o,OBJ_STRING)) return; // key对应的值对象 是空或者不是空 不是字符串 则返回
 
-    if (o->encoding == OBJ_ENCODING_INT) {
+    if (o->encoding == OBJ_ENCODING_INT) { // 是字符串 编码是整数
         str = llbuf;
-        strlen = ll2string(llbuf,sizeof(llbuf),(long)o->ptr);
-    } else {
+        strlen = ll2string(llbuf,sizeof(llbuf),(long)o->ptr); // 整数转字符串获得长度
+    } else { // 编码是字符串
         str = o->ptr;
-        strlen = sdslen(str);
+        strlen = sdslen(str); // 直接获得字符串长度
     }
 
-    /* Convert negative indexes */
+    /* Convert negative indexes */ // 负索引转正索引
     if (start < 0 && end < 0 && start > end) {
         addReply(c,shared.emptybulk);
         return;
     }
-    if (start < 0) start = strlen+start;
+    if (start < 0) start = strlen+start; // 正索引=长度+负索引
     if (end < 0) end = strlen+end;
-    if (start < 0) start = 0;
+    if (start < 0) start = 0; // 算完后还是负值 则 设置为0
     if (end < 0) end = 0;
-    if ((unsigned long long)end >= strlen) end = strlen-1;
+    if ((unsigned long long)end >= strlen) end = strlen-1; // end是最后一个
 
     /* Precondition: end >= 0 && end < strlen, so the only condition where
      * nothing can be returned is: start > end. */
-    if (start > end || strlen == 0) {
+    if (start > end || strlen == 0) { // 起始大于截止 或者 长度是0
         addReply(c,shared.emptybulk);
-    } else {
+    } else { // 返回字符串内容
         addReplyBulkCBuffer(c,(char*)str+start,end-start+1);
     }
 }
@@ -323,101 +332,132 @@ void mgetCommand(client *c) {
         }
     }
 }
-
+/**
+ * mset内部命令 实现
+ * @param c
+ * @param nx nx=1 则是msetnx
+ */
 void msetGenericCommand(client *c, int nx) {
     int j;
 
-    if ((c->argc % 2) == 0) {
-        addReplyError(c,"wrong number of arguments for MSET");
-        return;
+    if ((c->argc % 2) == 0) { // 参数个数是偶数
+        addReplyError(c,"wrong number of arguments for MSET"); // 响应参数个数错误
+        return; // 返回
     }
 
     /* Handle the NX flag. The MSETNX semantic is to return zero and don't
      * set anything if at least one key alerady exists. */
-    if (nx) {
-        for (j = 1; j < c->argc; j += 2) {
-            if (lookupKeyWrite(c->db,c->argv[j]) != NULL) {
-                addReply(c, shared.czero);
+    if (nx) { // msetnx
+        for (j = 1; j < c->argc; j += 2) { // 取出所有的key
+            if (lookupKeyWrite(c->db,c->argv[j]) != NULL) { // 在db中查找key 找到了
+                addReply(c, shared.czero); // key计数+1
                 return;
             }
         }
     }
 
-    for (j = 1; j < c->argc; j += 2) {
-        c->argv[j+1] = tryObjectEncoding(c->argv[j+1]);
-        setKey(c->db,c->argv[j],c->argv[j+1]);
-        notifyKeyspaceEvent(NOTIFY_STRING,"set",c->argv[j],c->db->id);
+    for (j = 1; j < c->argc; j += 2) { // key不存在或mset 循环key和value
+        c->argv[j+1] = tryObjectEncoding(c->argv[j+1]); // 把value转为redisObject
+        setKey(c->db,c->argv[j],c->argv[j+1]); // 在db中设置key和value
+        notifyKeyspaceEvent(NOTIFY_STRING,"set",c->argv[j],c->db->id); // 通知键空间通知 set
     }
-    server.dirty += (c->argc-1)/2;
-    addReply(c, nx ? shared.cone : shared.ok);
+    server.dirty += (c->argc-1)/2; // 更新数据修改计数 参数/2
+    addReply(c, nx ? shared.cone : shared.ok); // 响应
 }
-
+/**
+ * mset key1 value1 key2 value2
+ * @param c
+ */
 void msetCommand(client *c) {
-    msetGenericCommand(c,0);
+    msetGenericCommand(c,0); // 调用内部命令 nx=0
 }
-
+/**
+ * msetx key1 value1 key2 value2
+ * @param c
+ */
 void msetnxCommand(client *c) {
-    msetGenericCommand(c,1);
+    msetGenericCommand(c,1); // 调用内部命令 nx=1
 }
-
+/**
+ * incr key
+ * decr key
+ * incrby key incr
+ * decrby key decr
+ * @param c
+ * @param incr
+ */
 void incrDecrCommand(client *c, long long incr) {
     long long value, oldvalue;
     robj *o, *new;
 
-    o = lookupKeyWrite(c->db,c->argv[1]);
-    if (o != NULL && checkType(c,o,OBJ_STRING)) return;
-    if (getLongLongFromObjectOrReply(c,o,&value,NULL) != C_OK) return;
+    o = lookupKeyWrite(c->db,c->argv[1]); // 在db中获得key对应的值对象
+    if (o != NULL && checkType(c,o,OBJ_STRING)) return; // 值对象存在并且类型不是字符串 返回
+    if (getLongLongFromObjectOrReply(c,o,&value,NULL) != C_OK) return; // 获得值对象中的整数 不是整数 则返回
 
-    oldvalue = value;
+    oldvalue = value; // 旧的值
     if ((incr < 0 && oldvalue < 0 && incr < (LLONG_MIN-oldvalue)) ||
-        (incr > 0 && oldvalue > 0 && incr > (LLONG_MAX-oldvalue))) {
+        (incr > 0 && oldvalue > 0 && incr > (LLONG_MAX-oldvalue))) { // 不在main和max之间
         addReplyError(c,"increment or decrement would overflow");
         return;
     }
-    value += incr;
+    value += incr; // 累加
 
     if (o && o->refcount == 1 && o->encoding == OBJ_ENCODING_INT &&
         (value < 0 || value >= OBJ_SHARED_INTEGERS) &&
-        value >= LONG_MIN && value <= LONG_MAX)
+        value >= LONG_MIN && value <= LONG_MAX) // 值对象存在 并且引用为1 并且编码是int 并且在区间中
     {
-        new = o;
+        new = o; // 把value赋给值对象
         o->ptr = (void*)((long)value);
     } else {
-        new = createStringObjectFromLongLongForValue(value);
-        if (o) {
-            dbOverwrite(c->db,c->argv[1],new);
-        } else {
-            dbAdd(c->db,c->argv[1],new);
+        new = createStringObjectFromLongLongForValue(value); // 创建新的值对象
+        if (o) { // 值对象存在
+            dbOverwrite(c->db,c->argv[1],new); //覆盖原值对象
+        } else { // 值对象不存在
+            dbAdd(c->db,c->argv[1],new); // 添加kv
         }
     }
     signalModifiedKey(c->db,c->argv[1]);
     notifyKeyspaceEvent(NOTIFY_STRING,"incrby",c->argv[1],c->db->id);
     server.dirty++;
+    // 应答
+
     addReply(c,shared.colon);
     addReply(c,new);
     addReply(c,shared.crlf);
 }
-
+/**
+ *  incr key
+ * @param c
+ */
 void incrCommand(client *c) {
-    incrDecrCommand(c,1);
+    incrDecrCommand(c,1); // 自增1
 }
-
+/**
+ * decr key
+ * @param c
+ */
 void decrCommand(client *c) {
-    incrDecrCommand(c,-1);
+    incrDecrCommand(c,-1); // 自减1
 }
-
+/**
+ * incrby keyincr
+ * @param c
+ */
 void incrbyCommand(client *c) {
     long long incr;
 
-    if (getLongLongFromObjectOrReply(c, c->argv[2], &incr, NULL) != C_OK) return;
-    incrDecrCommand(c,incr);
+    if (getLongLongFromObjectOrReply(c, c->argv[2], &incr, NULL) != C_OK) return; // 获得incr参数的整数值 incr不是整数 则返回
+    incrDecrCommand(c,incr); // incr = incr
 }
-
+/**
+ * decrby key decr
+ * @param c
+ */
 void decrbyCommand(client *c) {
     long long incr;
 
-    if (getLongLongFromObjectOrReply(c, c->argv[2], &incr, NULL) != C_OK) return;
-    incrDecrCommand(c,-incr);
+    if (getLongLongFromObjectOrReply(c, c->argv[2], &incr, NULL) != C_OK) return; // 获得incr参数的整数值 incr不是整数 则返回
+    incrDecrCommand(c,-incr); // incr = -incr
 }
 
 void incrbyfloatCommand(client *c) {
@@ -453,43 +493,49 @@ void incrbyfloatCommand(client *c) {
     decrRefCount(aux);
     rewriteClientCommandArgument(c,2,new);
 }
-
+/**
+ * append key value
+ * @param c
+ */
 void appendCommand(client *c) {
     size_t totlen;
     robj *o, *append;
 
-    o = lookupKeyWrite(c->db,c->argv[1]);
-    if (o == NULL) {
+    o = lookupKeyWrite(c->db,c->argv[1]); // 从db中获得key对应的值对象
+    if (o == NULL) { // 值对象为空 kv不存在
         /* Create the key */
-        c->argv[2] = tryObjectEncoding(c->argv[2]);
-        dbAdd(c->db,c->argv[1],c->argv[2]);
+        c->argv[2] = tryObjectEncoding(c->argv[2]); // 把value转为值对象(尝试整型转化)
+        dbAdd(c->db,c->argv[1],c->argv[2]); // kv添加到db
         incrRefCount(c->argv[2]);
-        totlen = stringObjectLen(c->argv[2]);
-    } else {
+        totlen = stringObjectLen(c->argv[2]); // 获得值对象的长度
+    } else { // 值对象为空 kv存在
         /* Key exists, check type */
-        if (checkType(c,o,OBJ_STRING))
+        if (checkType(c,o,OBJ_STRING)) // 检测值对象类型 不是字符串则返回
             return;
 
         /* "append" is an argument, so always an sds */
-        append = c->argv[2];
-        totlen = stringObjectLen(o)+sdslen(append->ptr);
-        if (checkStringLength(c,totlen) != C_OK)
+        append = c->argv[2]; // 获得append参数
+        totlen = stringObjectLen(o)+sdslen(append->ptr); // 计算总长度=原值对象长度+append的长度
+        if (checkStringLength(c,totlen) != C_OK) // 总长度大于512M
             return;
 
         /* Append the value */
-        o = dbUnshareStringValue(c->db,c->argv[1],o);
-        o->ptr = sdscatlen(o->ptr,append->ptr,sdslen(append->ptr));
-        totlen = sdslen(o->ptr);
+        o = dbUnshareStringValue(c->db,c->argv[1],o); // 解除key共享 o是新的值对象
+        o->ptr = sdscatlen(o->ptr,append->ptr,sdslen(append->ptr)); // 将值对象的sds和追加的sds拼接并赋给o
+        totlen = sdslen(o->ptr); // 获得新的值兑现过的长度
     }
-    signalModifiedKey(c->db,c->argv[1]);
-    notifyKeyspaceEvent(NOTIFY_STRING,"append",c->argv[1],c->db->id);
+    signalModifiedKey(c->db,c->argv[1]); // 键修改信号
+    notifyKeyspaceEvent(NOTIFY_STRING,"append",c->argv[1],c->db->id); // 键空间通知
     server.dirty++;
-    addReplyLongLong(c,totlen);
+    addReplyLongLong(c,totlen); // 响应总长度
 }
-
+/**
+ * strlen key
+ * @param c
+ */
 void strlenCommand(client *c) {
     robj *o;
-    if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.czero)) == NULL ||
-        checkType(c,o,OBJ_STRING)) return;
-    addReplyLongLong(c,stringObjectLen(o));
+    if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.czero)) == NULL || // 在db中查找key对应的值对象 如果没有则响应0
+        checkType(c,o,OBJ_STRING)) return; // 有 类型不是字符串 则返回
+    addReplyLongLong(c,stringObjectLen(o)); // 响应长度
 }

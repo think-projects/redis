@@ -2537,7 +2537,7 @@ void processClientsWaitingReplicas(void) {
         if (last_offset && last_offset > c->bpop.reploffset &&
                            last_numreplicas > c->bpop.numreplicas)
         {
-            unblockClient(c);
+            unblockClient(c); // 解除阻塞
             addReplyLongLong(c,last_numreplicas);
         } else {
             int numreplicas = replicationCountAcksByOffset(c->bpop.reploffset);

@@ -832,7 +832,7 @@ int clientsCronHandleTimeout(client *c, mstime_t now_ms) {
         (now - c->lastinteraction > server.maxidletime))
     {
         serverLog(LL_VERBOSE,"Closing idle client");
-        freeClient(c);
+        freeClient(c); // 释放client
         return 1;
     } else if (c->flags & CLIENT_BLOCKED) {
         /* Blocked OPS timeout is handled with milliseconds resolution.
@@ -842,7 +842,7 @@ int clientsCronHandleTimeout(client *c, mstime_t now_ms) {
         if (c->bpop.timeout != 0 && c->bpop.timeout < now_ms) {
             /* Handle blocking operation specific timeout. */
             replyToBlockedClientTimedOut(c);
-            unblockClient(c);
+            unblockClient(c); // 解除阻塞
         } else if (server.cluster_enabled) {
             /* Cluster: handle unblock & redirect of clients blocked
              * into keys no longer served by this server. */
@@ -871,7 +871,7 @@ int clientsCronResizeQueryBuffer(client *c) {
         /* Only resize the query buffer if it is actually wasting
          * at least a few kbytes. */
         if (sdsavail(c->querybuf) > 1024*4) {
-            c->querybuf = sdsRemoveFreeSpace(c->querybuf);
+            c->querybuf = sdsRemoveFreeSpace(c->querybuf); // 释放空闲的空间
         }
     }
     /* Reset the peak again to capture the peak memory usage in the next
@@ -997,8 +997,8 @@ void clientsCron(void) {
         /* The following functions do different service checks on the client.
          * The protocol is that they return non-zero if the client was
          * terminated. */
-        if (clientsCronHandleTimeout(c,now)) continue;
-        if (clientsCronResizeQueryBuffer(c)) continue;
+        if (clientsCronHandleTimeout(c,now)) continue; // 释放空闲client和解除阻塞
+        if (clientsCronResizeQueryBuffer(c)) continue; // 释放空闲的空间
         if (clientsCronTrackExpansiveClients(c)) continue;
     }
 }
@@ -1107,36 +1107,45 @@ void updateCachedTime(int update_daylight_info) {
  * so in order to throttle execution of things we want to do less frequently
  * a macro is used: run_with_period(milliseconds) { .... }
  */
-
+/**
+ * 定时器
+ * @param eventLoop
+ * @param id
+ * @param clientData
+ * @return
+ */
 int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     int j;
+    // 参数都未使用
     UNUSED(eventLoop);
     UNUSED(id);
     UNUSED(clientData);
 
     /* Software watchdog: deliver the SIGALRM that will reach the signal
      * handler if we don't return here fast enough. */
-    if (server.watchdog_period) watchdogScheduleSignal(server.watchdog_period);
+    if (server.watchdog_period) watchdogScheduleSignal(server.watchdog_period); // 开启看门狗 SIGALRM 看门狗处理
 
     /* Update the time cache. */
-    updateCachedTime(1);
+    updateCachedTime(1); // 更新时间 系统时间缓存在server中
 
-    server.hz = server.config_hz;
+    server.hz = server.config_hz; // 执行频次 默认是配置的频次 100ms1次 hz=10
     /* Adapt the server.hz value to the number of configured clients. If we have
      * many clients, we want to call serverCron() with an higher frequency. */
-    if (server.dynamic_hz) {
+    if (server.dynamic_hz) { // 开启动态hz
+        // 跟client的数量有关
         while (listLength(server.clients) / server.hz >
                MAX_CLIENTS_PER_CLOCK_TICK)
         {
-            server.hz *= 2;
-            if (server.hz > CONFIG_MAX_HZ) {
-                server.hz = CONFIG_MAX_HZ;
+            server.hz *= 2; // 每次扩大1倍
+            if (server.hz > CONFIG_MAX_HZ) { // 频次大于最大频次
+                server.hz = CONFIG_MAX_HZ; // 执行频次等于最大频次
                 break;
             }
         }
     }
 
-    run_with_period(100) {
+    run_with_period(100) { // 满足条件执行代码块
+        // 统计 命令数,网络输入字节数,网络输出字节数
         trackInstantaneousMetric(STATS_METRIC_COMMAND,server.stat_numcommands);
         trackInstantaneousMetric(STATS_METRIC_NET_INPUT,
                 server.stat_net_input_bytes);
@@ -1159,15 +1168,15 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     atomicSet(server.lruclock,lruclock);
 
     /* Record the max memory used since the server was started. */
-    if (zmalloc_used_memory() > server.stat_peak_memory)
-        server.stat_peak_memory = zmalloc_used_memory();
+    if (zmalloc_used_memory() > server.stat_peak_memory) // 使用内存大于峰值内存
+        server.stat_peak_memory = zmalloc_used_memory(); // 峰值内存等于使用内存
 
     run_with_period(100) {
         /* Sample the RSS and other metrics here since this is a relatively slow call.
          * We must sample the zmalloc_used at the same time we take the rss, otherwise
          * the frag ratio calculate may be off (ratio of two samples at different times) */
-        server.cron_malloc_stats.process_rss = zmalloc_get_rss();
-        server.cron_malloc_stats.zmalloc_used = zmalloc_used_memory();
+        server.cron_malloc_stats.process_rss = zmalloc_get_rss(); // 常驻内存
+        server.cron_malloc_stats.zmalloc_used = zmalloc_used_memory(); // 使用内存
         /* Sampling the allcator info can be slow too.
          * The fragmentation ratio it'll show is potentically more accurate
          * it excludes other RSS pages such as: shared libraries, LUA and other non-zmalloc
@@ -1192,20 +1201,20 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
 
     /* We received a SIGTERM, shutting down here in a safe way, as it is
      * not ok doing so inside the signal handler. */
-    if (server.shutdown_asap) {
-        if (prepareForShutdown(SHUTDOWN_NOFLAGS) == C_OK) exit(0);
+    if (server.shutdown_asap) { // 接收到SIGTERM信号
+        if (prepareForShutdown(SHUTDOWN_NOFLAGS) == C_OK) exit(0); // 准备退出
         serverLog(LL_WARNING,"SIGTERM received but errors trying to shut down the server, check the logs for more information");
         server.shutdown_asap = 0;
     }
 
     /* Show some info about non-empty databases */
-    run_with_period(5000) {
-        for (j = 0; j < server.dbnum; j++) {
+    run_with_period(5000) { // 记录不是空的数据
+        for (j = 0; j < server.dbnum; j++) { // 遍历所有数据库
             long long size, used, vkeys;
 
-            size = dictSlots(server.db[j].dict);
-            used = dictSize(server.db[j].dict);
-            vkeys = dictSize(server.db[j].expires);
+            size = dictSlots(server.db[j].dict); // 字典
+            used = dictSize(server.db[j].dict); // 使用
+            vkeys = dictSize(server.db[j].expires); // 有效
             if (used || vkeys) {
                 serverLog(LL_VERBOSE,"DB %d: %lld keys (%lld volatile) in %lld slots HT.",j,used,vkeys,size);
                 /* dictPrintStats(server.dict); */
@@ -1214,21 +1223,21 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     }
 
     /* Show information about connected clients */
-    if (!server.sentinel_mode) {
+    if (!server.sentinel_mode) { // 不是哨兵
         run_with_period(5000) {
             serverLog(LL_VERBOSE,
                 "%lu clients connected (%lu replicas), %zu bytes in use",
-                listLength(server.clients)-listLength(server.slaves),
-                listLength(server.slaves),
-                zmalloc_used_memory());
+                listLength(server.clients)-listLength(server.slaves), // 链接的client数
+                listLength(server.slaves), // slave数
+                zmalloc_used_memory()); // 使用内存
         }
     }
 
     /* We need to do a few operations on clients asynchronously. */
-    clientsCron();
+    clientsCron(); // 清理空闲的client或释放querybuf中未被使用的空间
 
     /* Handle background operations on Redis databases. */
-    databasesCron();
+    databasesCron(); // 处理db 慢速过期删除 resize rehash
 
     /* Start a scheduled AOF rewrite if this was requested by the user while
      * a BGSAVE was in progress. */
@@ -1244,21 +1253,26 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     {
         int statloc;
         pid_t pid;
-
+        /*
+         * wait3: 等待
+         * 除了返回pid外还有进程的状态信息
+         * wait waitpid:返回pid
+         * WNOHANG: 进程不阻塞
+         */
         if ((pid = wait3(&statloc,WNOHANG,NULL)) != 0) { // 等待处理结果
             int exitcode = WEXITSTATUS(statloc);
             int bysignal = 0;
 
             if (WIFSIGNALED(statloc)) bysignal = WTERMSIG(statloc);
 
-            if (pid == -1) {
+            if (pid == -1) { // 子进程出错
                 serverLog(LL_WARNING,"wait3() returned an error: %s. "
                     "rdb_child_pid = %d, aof_child_pid = %d",
                     strerror(errno),
                     (int) server.rdb_child_pid,
                     (int) server.aof_child_pid);
             } else if (pid == server.rdb_child_pid) { // 如果是RDB
-                backgroundSaveDoneHandler(exitcode,bysignal);
+                backgroundSaveDoneHandler(exitcode,bysignal); // RDB收尾工作
                 if (!bysignal && exitcode == 0) receiveChildInfo();
             } else if (pid == server.aof_child_pid) { // 如果是AOF重写
                 backgroundRewriteDoneHandler(exitcode,bysignal); // 子进程处理结束,父进程收尾工作
@@ -1270,10 +1284,10 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
                         (long)pid);
                 }
             }
-            updateDictResizePolicy();
+            updateDictResizePolicy(); // 不能resize
             closeChildInfoPipe();
         }
-    } else {
+    } else { // 没有正在执行的子进程(rdb或aof)
         /* If there is not a background saving/rewrite in progress check if
          * we have to save/rewrite now. */
         for (j = 0; j < server.saveparamslen; j++) {
@@ -1324,32 +1338,32 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
      * clear the AOF error in case of success to make the DB writable again,
      * however to try every second is enough in case of 'hz' is set to
      * an higher frequency. */
-    run_with_period(1000) {
-        if (server.aof_last_write_status == C_ERR)
+    run_with_period(1000) { // 1S执行
+        if (server.aof_last_write_status == C_ERR) // 刷盘失败
             flushAppendOnlyFile(0); // 有条件刷盘
     }
 
     /* Close clients that need to be closed asynchronous */
-    freeClientsInAsyncFreeQueue();
+    freeClientsInAsyncFreeQueue(); // 释放client
 
     /* Clear the paused clients flag if needed. */
     clientsArePaused(); /* Don't check return value, just use the side effect.*/
 
     /* Replication cron function -- used to reconnect to master,
      * detect transfer failures, start background RDB transfers and so forth. */
-    run_with_period(1000) replicationCron();
+    run_with_period(1000) replicationCron(); // 复制
 
     /* Run the Redis Cluster cron. */
     run_with_period(100) {
-        if (server.cluster_enabled) clusterCron();
+        if (server.cluster_enabled) clusterCron(); // 集群
     }
 
     /* Run the Sentinel timer if we are in sentinel mode. */
-    if (server.sentinel_mode) sentinelTimer();
+    if (server.sentinel_mode) sentinelTimer(); // sentinel
 
     /* Cleanup expired MIGRATE cached sockets. */
     run_with_period(1000) {
-        migrateCloseTimedoutSockets();
+        migrateCloseTimedoutSockets(); // 超时Socket
     }
 
     /* Start a scheduled BGSAVE if the corresponding flag is set. This is
@@ -1370,14 +1384,17 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
             server.rdb_bgsave_scheduled = 0;
     }
 
-    server.cronloops++;
-    return 1000/server.hz;
+    server.cronloops++; // 执行次数+1
+    return 1000/server.hz; // 时间间隔
 }
 
 /* This function gets called every time Redis is entering the
  * main loop of the event driven library, that is, before to sleep
  * for ready file descriptors. */
-
+/**
+ * 阻塞钱处理
+ * @param eventLoop
+ */
 void beforeSleep(struct aeEventLoop *eventLoop) {
     UNUSED(eventLoop);
 
@@ -1385,7 +1402,7 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
      * may change the state of Redis Cluster (from ok to fail or vice versa),
      * so it's a good idea to call it before serving the unblocked clients
      * later in this function. */
-    if (server.cluster_enabled) clusterBeforeSleep();
+    if (server.cluster_enabled) clusterBeforeSleep(); // 集群 调用clusterBeforeSleep
 
     /* Run a fast expire cycle (the called function will return
      * ASAP if a fast cycle is not needed). */
@@ -1394,13 +1411,14 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
 
     /* Send all the slaves an ACK request if at least one client blocked
      * during the previous event loop iteration. */
-    if (server.get_ack_from_slaves) {
+    if (server.get_ack_from_slaves) { // 主从应答 REPLCONF GETACK
         robj *argv[3];
-
+        // 参数列表
         argv[0] = createStringObject("REPLCONF",8);
         argv[1] = createStringObject("GETACK",6);
         argv[2] = createStringObject("*",1); /* Not used argument. */
-        replicationFeedSlaves(server.slaves, server.slaveseldb, argv, 3);
+        replicationFeedSlaves(server.slaves, server.slaveseldb, argv, 3); // 想slave发送请求
+        // 释放参数列表
         decrRefCount(argv[0]);
         decrRefCount(argv[1]);
         decrRefCount(argv[2]);
@@ -1409,16 +1427,16 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
 
     /* Unblock all the clients blocked for synchronous replication
      * in WAIT. */
-    if (listLength(server.clients_waiting_acks))
-        processClientsWaitingReplicas();
+    if (listLength(server.clients_waiting_acks)) // 有client在wait
+        processClientsWaitingReplicas(); // 解除阻塞的client
 
     /* Check if there are clients unblocked by modules that implement
      * blocking commands. */
     moduleHandleBlockedClients();
 
     /* Try to process pending commands for clients that were just unblocked. */
-    if (listLength(server.unblocked_clients))
-        processUnblockedClients();
+    if (listLength(server.unblocked_clients)) // 未阻塞client
+        processUnblockedClients(); // 处理非阻塞client的输入缓冲区
 
     /* Write the AOF buffer on disk */
     flushAppendOnlyFile(0); // 有条件刷盘
@@ -1429,7 +1447,7 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
     /* Before we are going to sleep, let the threads access the dataset by
      * releasing the GIL. Redis main thread will not touch anything at this
      * time. */
-    if (moduleCount()) moduleReleaseGIL();
+    if (moduleCount()) moduleReleaseGIL(); // 释放GIL锁
 }
 
 /* This function is called immadiately after the event loop multiplexing
@@ -1437,7 +1455,7 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
  * the different events callbacks. */
 void afterSleep(struct aeEventLoop *eventLoop) {
     UNUSED(eventLoop);
-    if (moduleCount()) moduleAcquireGIL();
+    if (moduleCount()) moduleAcquireGIL(); // 加GIL锁 wait后需要只有主线程运行
 }
 
 /* =========================== Server initialization ======================== */
@@ -4447,9 +4465,9 @@ int main(int argc, char **argv) {
     if (server.maxmemory > 0 && server.maxmemory < 1024*1024) {
         serverLog(LL_WARNING,"WARNING: You specified a maxmemory value that is less than 1MB (current value is %llu bytes). Are you sure this is what you really want?", server.maxmemory);
     }
-
-    aeSetBeforeSleepProc(server.el,beforeSleep);
-    aeSetAfterSleepProc(server.el,afterSleep);
+    // sleep: wait epoll_wait select 阻塞前 阻塞后
+    aeSetBeforeSleepProc(server.el,beforeSleep); // 设置beforeSleep回调函数
+    aeSetAfterSleepProc(server.el,afterSleep); // 设置afterSleep回调函数
     aeMain(server.el); // 监听事件
     aeDeleteEventLoop(server.el);
     return 0;

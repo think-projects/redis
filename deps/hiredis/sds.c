@@ -355,16 +355,22 @@ void sdsIncrLen(sds s, int incr) {
  *
  * if the specified length is smaller than the current length, no operation
  * is performed. */
+/**
+ * 返回sds 扩容或返回原来的
+ * @param s
+ * @param len
+ * @return
+ */
 sds sdsgrowzero(sds s, size_t len) {
-    size_t curlen = sdslen(s);
+    size_t curlen = sdslen(s); // 当前sds的长度
 
-    if (len <= curlen) return s;
-    s = sdsMakeRoomFor(s,len-curlen);
+    if (len <= curlen) return s; // 增加的长度小于等于sds长度 则 返回原来的sds
+    s = sdsMakeRoomFor(s,len-curlen); // 增加的长度小于等于sds长度 则 扩容
     if (s == NULL) return NULL;
 
     /* Make sure added region doesn't contain garbage */
     memset(s+curlen,0,(len-curlen+1)); /* also set trailing \0 byte */
-    sdssetlen(s, len);
+    sdssetlen(s, len); // 新的长度
     return s;
 }
 

@@ -841,10 +841,12 @@ typedef struct zskiplist { //跳跃表节点链表
     unsigned long length; // 跳跃表长度
     int level; // 跳跃表高度 (层高 )
 } zskiplist;
-
+/**
+ * 有序集合
+ */
 typedef struct zset {
-    dict *dict;
-    zskiplist *zsl;
+    dict *dict; // 字典 key:ele value:socre
+    zskiplist *zsl; // 跳跃表
 } zset;
 
 typedef struct clientBufferLimitsConfig {
@@ -1513,6 +1515,11 @@ void addReplyError(client *c, const char *err);
 void addReplyStatus(client *c, const char *status);
 void addReplyDouble(client *c, double d);
 void addReplyHumanLongDouble(client *c, long double d);
+/**
+ * 响应长度
+ * @param c
+ * @param ll
+ */
 void addReplyLongLong(client *c, long long ll);
 void addReplyMultiBulkLen(client *c, long length);
 void addReplyHelp(client *c, const char **help);
@@ -1607,6 +1614,11 @@ int isSdsRepresentableAsLongLong(sds s, long long *llval);
 int isObjectRepresentableAsLongLong(robj *o, long long *llongval);
 robj *tryObjectEncoding(robj *o);
 robj *getDecodedObject(robj *o);
+/**
+ * 计算值对象的值的长度
+ * @param o
+ * @return
+ */
 size_t stringObjectLen(robj *o);
 robj *createStringObjectFromLongLong(long long value);
 robj *createStringObjectFromLongLongForValue(long long value);
@@ -1725,7 +1737,7 @@ int hasActiveChildProcess();
 /* Struct to hold a inclusive/exclusive range spec by score comparison. */
 typedef struct {
     double min, max;
-    int minex, maxex; /* are min or max exclusive? */
+    int minex, maxex; /* are min or max exclusive? */ // minex=1 不包含
 } zrangespec;
 
 /* Struct to hold an inclusive/exclusive range spec by lexicographic comparison. */
@@ -1904,6 +1916,13 @@ int dbExists(redisDb *db, robj *key);
 robj *dbRandomKey(redisDb *db);
 int dbSyncDelete(redisDb *db, robj *key);
 int dbDelete(redisDb *db, robj *key);
+/**
+ * 解除key的共享
+ * @param db
+ * @param key
+ * @param o
+ * @return
+ */
 robj *dbUnshareStringValue(redisDb *db, robj *key, robj *o);
 
 #define EMPTYDB_NO_FLAGS 0      /* No flags. */

@@ -220,6 +220,12 @@ sds sdsnew(const char *init);
 sds sdsempty(void);
 sds sdsdup(const sds s);
 void sdsfree(sds s);
+/**
+ * 返回sds 扩容或返回原来的
+ * @param s
+ * @param len
+ * @return
+ */
 sds sdsgrowzero(sds s, size_t len);
 sds sdscatlen(sds s, const void *t, size_t len);
 sds sdscat(sds s, const char *t);

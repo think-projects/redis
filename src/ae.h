@@ -61,7 +61,7 @@
 
 struct aeEventLoop;
 
-/* Types and data structures */
+/* Types and data structures */ // 声明回调函数
 typedef void aeFileProc(struct aeEventLoop *eventLoop, int fd, void *clientData, int mask); // 回调函数 处理文件事件发生
 typedef int aeTimeProc(struct aeEventLoop *eventLoop, long long id, void *clientData);
 typedef void aeEventFinalizerProc(struct aeEventLoop *eventLoop, void *clientData);
@@ -121,9 +121,9 @@ typedef struct aeEventLoop {
     aeFiredEvent *fired; /* Fired events */ // 就绪的文件事件 是setsize大小的数据
     aeTimeEvent *timeEventHead; // 时间事件 指向双向链表的头
     int stop; // 事件处理停止标识
-    void *apidata; /* This is used for polling API specific data */
-    aeBeforeSleepProc *beforesleep;
-    aeBeforeSleepProc *aftersleep;
+    void *apidata; /* This is used for polling API specific data */ // 指向具体的IO多路复用对象 -> aeApiState
+    aeBeforeSleepProc *beforesleep; // 事件处理开始前的回调函数 处理 异步操作(aof刷新,客户端应答,快速过期删除)
+    aeBeforeSleepProc *aftersleep; // 事件处理结束后的回调函数
 } aeEventLoop;
 
 /* Prototypes */

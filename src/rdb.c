@@ -2183,7 +2183,7 @@ void backgroundSaveDoneHandlerDisk(int exitcode, int bysignal) {
         serverLog(LL_WARNING,
             "Background saving terminated by signal %d", bysignal);
         latencyStartMonitor(latency);
-        rdbRemoveTempFile(server.rdb_child_pid);
+        rdbRemoveTempFile(server.rdb_child_pid); // 移除临时文件
         latencyEndMonitor(latency);
         latencyAddSampleIfNeeded("rdb-unlink-temp-file",latency);
         /* SIGUSR1 is whitelisted, so we have a way to kill a child without
@@ -2298,10 +2298,10 @@ void backgroundSaveDoneHandlerSocket(int exitcode, int bysignal) {
 /* When a background RDB saving/transfer terminates, call the right handler. */
 void backgroundSaveDoneHandler(int exitcode, int bysignal) {
     switch(server.rdb_child_type) {
-    case RDB_CHILD_TYPE_DISK:
+    case RDB_CHILD_TYPE_DISK: // RDB文件
         backgroundSaveDoneHandlerDisk(exitcode,bysignal);
         break;
-    case RDB_CHILD_TYPE_SOCKET:
+    case RDB_CHILD_TYPE_SOCKET: // 主从复制
         backgroundSaveDoneHandlerSocket(exitcode,bysignal);
         break;
     default:

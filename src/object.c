@@ -616,13 +616,17 @@ int equalStringObjects(robj *a, robj *b) {
         return compareStringObjects(a,b) == 0;
     }
 }
-
+/**
+ * 计算值对象的值的长度
+ * @param o
+ * @return
+ */
 size_t stringObjectLen(robj *o) {
     serverAssertWithInfo(NULL,o,o->type == OBJ_STRING);
-    if (sdsEncodedObject(o)) {
-        return sdslen(o->ptr);
-    } else {
-        return sdigits10((long)o->ptr);
+    if (sdsEncodedObject(o)) { // 字符串
+        return sdslen(o->ptr); // 获得字符串长度
+    } else { // 整数
+        return sdigits10((long)o->ptr); // 计算长度
     }
 }
 
